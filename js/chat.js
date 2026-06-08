@@ -1,0 +1,99 @@
+import { client, databases, Query, ID, Permission, Role } from "./appwrite.js";
+import { DB_ID, COL_CONVERSATIONS, COL_MESSAGES } from "./config.js";
+import { getCachedConversation, saveCachedConversation } from "./cache.js";
+
+function pairKey(a, b) {
+  return [a, b].sort().join("_");
+}
+
+export async function getOrCreateConversation(meId, otherId) {
+  const key = pairKey(meId, otherId);
+
+  const cached = getCachedConversation(meId, key);
+  if (cached) return cached;
+
+  const found = await databases.listDocuments(DB_ID, COL_CONVERSATIONS, [
+    Query.equal("pairKey", key),
+    Query.limit(1),
+  ]);
+  if (found.documents.length) {
+    saveCachedConversation(meId, key, found.documents[0]);
+    return found.documents[0];
+  }
+
+  const created = await databases.createDocument(
+    DB_ID,
+    COL_CONVERSATIONS,
+    ID.unique(),
+    {
+      pairKey: key,
+      participants: [meId, otherId],
+    },
+    [
+      Permission.read(Role.users()),
+      Permission.update(Role.user(meId)),
+      Permission.delete(Role.user(meId)),
+    ]
+  );
+  saveCachedConversation(meId, key, created);
+  return created;
+}
+
+/**
+ * Loads messages for a conversation. If `since` is an ISO timestamp,
+ * only messages created strictly after that time are returned —
+ * use this with the latest cached message's `$createdAt` to fetch deltas.
+ */
+export async function loadMessages(conversationId, since) {
+  const queries = [
+    Query.equal("conversationId", conversationId),
+    Query.orderAsc("$createdAt"),
+    Query.limit(200),
+  ];
+  if (since) queries.push(Query.greaterThan("$createdAt", since));
+  const res = await databases.listDocuments(DB_ID, COL_MESSAGES, queries);
+  return res.documents;
+}
+
+export async function sendMessage(conversation, meId, text) {
+  const otherId = conversation.participants.find((p) => p !== meId);
+  return databases.createDocument(
+    DB_ID,
+    COL_MESSAGES,
+    ID.unique(),
+    {
+      conversationId: conversation.$id,
+      senderId: meId,
+      receiverId: otherId,
+      text,
+    },
+    [
+      Permission.read(Role.users()),
+      Permission.update(Role.user(meId)),
+      Permission.delete(Role.user(meId)),
+    ]
+  );
+}
+
+export async function editMessage(messageId, newText) {
+  return databases.updateDocument(DB_ID, COL_MESSAGES, messageId, { text: newText });
+}
+
+export async function deleteMessage(messageId) {
+  return databases.deleteDocument(DB_ID, COL_MESSAGES, messageId);
+}
+
+/**
+ * Subscribes to message create/update/delete events for the given conversation.
+ * Pass any combination of { onCreate, onUpdate, onDelete }; returns an unsubscribe fn.
+ */
+export function subscribeMessages(conversationId, handlers) {
+  const { onCreate, onUpdate, onDelete } = handlers;
+  const channel = `databases.${DB_ID}.collections.${COL_MESSAGES}.documents`;
+  return client.subscribe(channel, (resp) => {
+    if (resp.payload?.conversationId !== conversationId) return;
+    if (resp.events.some((e) => e.endsWith(".create"))) onCreate?.(resp.payload);
+    else if (resp.events.some((e) => e.endsWith(".update"))) onUpdate?.(resp.payload);
+    else if (resp.events.some((e) => e.endsWith(".delete"))) onDelete?.(resp.payload);
+  });
+}

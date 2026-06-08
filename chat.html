@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neer Chat</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="css/style.css" />
+  <script type="module">
+    import { applyTheme } from "./js/theme.js";
+    applyTheme();
+  </script>
+</head>
+<body>
+  <div class="chat" id="chat" data-view="sidebar">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="me">
+          <strong id="me-name">…</strong>
+        </div>
+        <button id="settings-btn" class="icon-btn" title="Settings">⚙</button>
+      </div>
+      <div class="user-list" id="user-list">
+        <div class="empty">Loading users…</div>
+      </div>
+    </aside>
+
+    <section class="thread">
+      <div class="thread-header">
+        <button id="back-btn" class="back-btn" type="button" aria-label="Back to chat list">←</button>
+        <span id="thread-title">Select a user to start chatting</span>
+      </div>
+      <div class="messages" id="messages">
+        <div class="placeholder">No conversation selected.</div>
+      </div>
+      <form class="composer hidden" id="composer">
+        <textarea id="composer-input" placeholder="Type a message…" rows="1" required></textarea>
+        <button type="submit" id="send-btn">Send</button>
+      </form>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="settings-modal">
+    <div class="modal">
+      <header class="modal-header">
+        <h2>Settings</h2>
+        <button class="modal-close" id="close-settings" aria-label="Close">×</button>
+      </header>
+
+      <section class="modal-section">
+        <h3>Theme</h3>
+        <div class="theme-toggle" id="theme-toggle">
+          <button type="button" data-theme="dark">Dark</button>
+          <button type="button" data-theme="light">Light</button>
+        </div>
+      </section>
+
+      <section class="modal-section">
+        <h3>Display name</h3>
+        <form id="name-form">
+          <input name="name" type="text" required maxlength="48" placeholder="Display name" />
+          <button type="submit">Save name</button>
+        </form>
+      </section>
+
+      <section class="modal-section">
+        <h3>Password</h3>
+        <form id="password-form">
+          <input name="current" type="password" required placeholder="Current password" autocomplete="current-password" />
+          <input name="next" type="password" required minlength="8" placeholder="New password (min 8 chars)" autocomplete="new-password" />
+          <button type="submit">Update password</button>
+        </form>
+      </section>
+
+      <section class="modal-section">
+        <h3>Session</h3>
+        <button type="button" id="logout-btn" class="modal-secondary-btn">Log out</button>
+      </section>
+
+      <p id="settings-msg" class="msg"></p>
+    </div>
+  </div>
+
+  <div class="bubble-menu hidden" id="bubble-menu" role="menu"></div>
+
+  <script type="module">
+    import {
+      requireAuth,
+      logout,
+      updateName,
+      updatePassword,
+    } from "./js/auth.js";
+    import {
+      ensureProfile,
+      listOtherUsers,
+      updateProfileName,
+    } from "./js/users.js";
+    import {
+      getOrCreateConversation,
+      loadMessages,
+      sendMessage,
+      editMessage,
+      deleteMessage,
+      subscribeMessages,
+    } from "./js/chat.js";
+    import {
+      getCachedMessages,
+      appendCachedMessage,
+      updateCachedMessage,
+      removeCachedMessage,
+      getHiddenIds,
+      hideMessageLocally,
+    } from "./js/cache.js";
+    import { getTheme, setTheme } from "./js/theme.js";
+
+    const me = await requireAuth();
+    await ensureProfile(me);
+
+    document.getElementById("me-name").textContent = me.name || me.email;
+
+    document.getElementById("logout-btn").addEventListener("click", async () => {
+      await logout();
+      location.replace("./login.html");
+    });
+
+    const userListEl  = document.getElementById("user-list");
+    const headerEl    = document.getElementById("thread-title");
+    const messagesEl  = document.getElementById("messages");
+
+    document.getElementById("back-btn").addEventListener("click", () => {
+      chatEl.dataset.view = "sidebar";
+    });
+    const composerEl  = document.getElementById("composer");
+    const inputEl     = document.getElementById("composer-input");
+    const chatEl      = document.getElementById("chat");
+
+    let activeConversation = null;
+    let activeOther = null;
+    let unsubscribe = null;
+    const renderedIds = new Set();
+    const bubbleMap = new Map(); // messageId -> bubble element
+    let hiddenIds = new Set();
+
+    function formatTime(iso) {
+      const d = new Date(iso);
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+
+    function paintBubbleContent(bubble, msg) {
+      const isMine = msg.senderId === me.$id;
+      const edited = msg.$updatedAt && msg.$updatedAt !== msg.$createdAt;
+      bubble.innerHTML = "";
+      const textSpan = document.createElement("span");
+      textSpan.className = "bubble-text";
+      textSpan.textContent = msg.text;
+      bubble.appendChild(textSpan);
+      const time = document.createElement("span");
+      time.className = "time";
+      time.textContent = formatTime(msg.$createdAt) + (edited ? " · edited" : "");
+      bubble.appendChild(time);
+      const menuBtn = document.createElement("button");
+      menuBtn.className = "bubble-menu-btn";
+      menuBtn.type = "button";
+      menuBtn.textContent = "⋯";
+      menuBtn.setAttribute("aria-label", "Message actions");
+      menuBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openBubbleMenu(msg, isMine, menuBtn);
+      });
+      bubble.appendChild(menuBtn);
+    }
+
+    function renderMessage(msg) {
+      if (hiddenIds.has(msg.$id)) return;
+      if (renderedIds.has(msg.$id)) return;
+      renderedIds.add(msg.$id);
+      const wrap = document.createElement("div");
+      wrap.className = "bubble " + (msg.senderId === me.$id ? "me" : "them");
+      wrap.dataset.id = msg.$id;
+      paintBubbleContent(wrap, msg);
+      messagesEl.appendChild(wrap);
+      bubbleMap.set(msg.$id, wrap);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function applyMessageUpdate(msg) {
+      const bubble = bubbleMap.get(msg.$id);
+      if (!bubble) return;
+      paintBubbleContent(bubble, msg);
+    }
+
+    function applyMessageDelete(messageId) {
+      const bubble = bubbleMap.get(messageId);
+      if (bubble) bubble.remove();
+      bubbleMap.delete(messageId);
+      renderedIds.delete(messageId);
+    }
+
+    // ----- Bubble action menu -----
+    const bubbleMenu = document.getElementById("bubble-menu");
+
+    function closeBubbleMenu() {
+      bubbleMenu.classList.add("hidden");
+      bubbleMenu.innerHTML = "";
+    }
+
+    document.addEventListener("click", closeBubbleMenu);
+    document.addEventListener("scroll", closeBubbleMenu, true);
+
+    function openBubbleMenu(msg, isMine, anchor) {
+      closeBubbleMenu();
+      const items = [];
+      if (isMine) {
+        items.push({ label: "Edit",                action: () => startEdit(msg) });
+        items.push({ label: "Remove for everyone", action: () => removeForEveryone(msg) });
+      }
+      items.push({ label: "Remove for you", action: () => removeForMe(msg) });
+
+      items.forEach(({ label, action }) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = label;
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          closeBubbleMenu();
+          action();
+        });
+        bubbleMenu.appendChild(btn);
+      });
+
+      const rect = anchor.getBoundingClientRect();
+      bubbleMenu.style.top  = `${rect.bottom + 4}px`;
+      bubbleMenu.style.left = `${Math.min(rect.left, window.innerWidth - 180)}px`;
+      bubbleMenu.classList.remove("hidden");
+    }
+
+    // ----- Edit / delete actions -----
+    function startEdit(msg) {
+      const bubble = bubbleMap.get(msg.$id);
+      if (!bubble) return;
+      bubble.innerHTML = "";
+      bubble.classList.add("editing");
+      const ta = document.createElement("textarea");
+      ta.className = "edit-input";
+      ta.value = msg.text;
+      ta.rows = 1;
+      const actions = document.createElement("div");
+      actions.className = "edit-actions";
+      const save   = document.createElement("button");
+      save.type = "button"; save.textContent = "Save";
+      const cancel = document.createElement("button");
+      cancel.type = "button"; cancel.textContent = "Cancel";
+      actions.append(save, cancel);
+      bubble.append(ta, actions);
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+
+      const restore = () => {
+        bubble.classList.remove("editing");
+        paintBubbleContent(bubble, msg);
+      };
+
+      cancel.addEventListener("click", restore);
+
+      save.addEventListener("click", async () => {
+        const next = ta.value.trim();
+        if (!next || next === msg.text) { restore(); return; }
+        try {
+          const updated = await editMessage(msg.$id, next);
+          // Optimistic: realtime will also fire and re-paint, but do it now too.
+          Object.assign(msg, { text: updated.text, $updatedAt: updated.$updatedAt });
+          updateCachedMessage(me.$id, activeConversation.$id, msg.$id, {
+            text: updated.text, $updatedAt: updated.$updatedAt,
+          });
+          bubble.classList.remove("editing");
+          paintBubbleContent(bubble, msg);
+        } catch (err) {
+          alert("Edit failed: " + err.message);
+        }
+      });
+
+      ta.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save.click(); }
+        if (e.key === "Escape") cancel.click();
+      });
+    }
+
+    async function removeForEveryone(msg) {
+      if (!confirm("Remove this message for everyone? This cannot be undone.")) return;
+      try {
+        await deleteMessage(msg.$id);
+        // Realtime delete event will also clean up DOM + cache, but do it locally now too.
+        removeCachedMessage(me.$id, activeConversation.$id, msg.$id);
+        applyMessageDelete(msg.$id);
+      } catch (err) {
+        alert("Delete failed: " + err.message);
+      }
+    }
+
+    function removeForMe(msg) {
+      hideMessageLocally(me.$id, msg.$id);
+      hiddenIds.add(msg.$id);
+      applyMessageDelete(msg.$id);
+    }
+
+    async function openConversation(other) {
+      activeOther = other;
+      headerEl.innerHTML = `${other.name} <span class="sub">${other.email}</span>`;
+      messagesEl.innerHTML = "";
+      renderedIds.clear();
+      bubbleMap.clear();
+      hiddenIds = getHiddenIds(me.$id);
+      composerEl.classList.remove("hidden");
+      chatEl.dataset.view = "thread";
+
+      document.querySelectorAll(".user-item").forEach(el => {
+        el.classList.toggle("active", el.dataset.id === other.$id);
+      });
+
+      if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+
+      activeConversation = await getOrCreateConversation(me.$id, other.$id);
+      const convId = activeConversation.$id;
+
+      const cached = getCachedMessages(me.$id, convId);
+      cached.forEach(renderMessage);
+
+      const since = cached.length ? cached[cached.length - 1].$createdAt : null;
+      const fresh = await loadMessages(convId, since);
+      fresh.forEach((msg) => {
+        appendCachedMessage(me.$id, convId, msg);
+        renderMessage(msg);
+      });
+
+      unsubscribe = subscribeMessages(convId, {
+        onCreate: (msg) => {
+          appendCachedMessage(me.$id, convId, msg);
+          renderMessage(msg);
+        },
+        onUpdate: (msg) => {
+          updateCachedMessage(me.$id, convId, msg.$id, {
+            text: msg.text, $updatedAt: msg.$updatedAt,
+          });
+          applyMessageUpdate(msg);
+        },
+        onDelete: (msg) => {
+          removeCachedMessage(me.$id, convId, msg.$id);
+          applyMessageDelete(msg.$id);
+        },
+      });
+    }
+
+    async function renderUserList() {
+      const users = await listOtherUsers(me.$id);
+      if (!users.length) {
+        userListEl.innerHTML = '<div class="empty">No other users yet. Have a friend sign up.</div>';
+        return;
+      }
+      userListEl.innerHTML = "";
+      users.forEach(u => {
+        const item = document.createElement("div");
+        item.className = "user-item";
+        item.dataset.id = u.$id;
+        item.innerHTML = `<span class="name"></span><span class="email"></span>`;
+        item.querySelector(".name").textContent = u.name;
+        item.querySelector(".email").textContent = u.email;
+        item.addEventListener("click", () => openConversation(u));
+        userListEl.appendChild(item);
+      });
+    }
+
+    composerEl.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const text = inputEl.value.trim();
+      if (!text || !activeConversation) return;
+      inputEl.value = "";
+      try {
+        await sendMessage(activeConversation, me.$id, text);
+      } catch (err) {
+        alert("Failed to send: " + err.message);
+        inputEl.value = text;
+      }
+    });
+
+    inputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        composerEl.requestSubmit();
+      }
+    });
+
+    // ----- Settings modal -----
+    const settingsModal = document.getElementById("settings-modal");
+    const settingsMsg   = document.getElementById("settings-msg");
+    const themeToggle   = document.getElementById("theme-toggle");
+    const nameForm      = document.getElementById("name-form");
+    const passwordForm  = document.getElementById("password-form");
+    const meNameEl      = document.getElementById("me-name");
+
+    function showSettingsMsg(text, isError = false) {
+      settingsMsg.textContent = text;
+      settingsMsg.classList.toggle("error", isError);
+    }
+
+    function syncThemeButtons() {
+      const current = getTheme();
+      themeToggle.querySelectorAll("button").forEach(b => {
+        b.classList.toggle("active", b.dataset.theme === current);
+      });
+    }
+
+    function openSettings() {
+      nameForm.elements.name.value = me.name || "";
+      passwordForm.reset();
+      showSettingsMsg("");
+      syncThemeButtons();
+      settingsModal.classList.remove("hidden");
+    }
+
+    function closeSettings() {
+      settingsModal.classList.add("hidden");
+    }
+
+    document.getElementById("settings-btn").addEventListener("click", openSettings);
+    document.getElementById("close-settings").addEventListener("click", closeSettings);
+    settingsModal.addEventListener("click", (e) => {
+      if (e.target === settingsModal) closeSettings();
+    });
+
+    themeToggle.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-theme]");
+      if (!btn) return;
+      setTheme(btn.dataset.theme);
+      syncThemeButtons();
+    });
+
+    nameForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const newName = nameForm.elements.name.value.trim();
+      if (!newName || newName === me.name) return;
+      try {
+        await updateName(newName);
+        await updateProfileName(me.$id, newName);
+        me.name = newName;
+        meNameEl.textContent = newName;
+        showSettingsMsg("Name updated.");
+      } catch (err) {
+        showSettingsMsg(err.message, true);
+      }
+    });
+
+    passwordForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const current = passwordForm.elements.current.value;
+      const next    = passwordForm.elements.next.value;
+      try {
+        await updatePassword(current, next);
+        passwordForm.reset();
+        showSettingsMsg("Password updated.");
+      } catch (err) {
+        showSettingsMsg(err.message, true);
+      }
+    });
+
+    await renderUserList();
+  </script>
+</body>
+</html>

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in · Neer</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="css/style.css" />
+  <script type="module">
+    import { applyTheme } from "./js/theme.js";
+    applyTheme();
+  </script>
+</head>
+<body>
+  <main class="auth">
+    <h1>Neer</h1>
+
+    <div class="tabs">
+      <button data-tab="login" class="tab active">Log in</button>
+      <button data-tab="signup" class="tab">Sign up</button>
+    </div>
+
+    <form id="login-form" class="form">
+      <input type="email" name="email" placeholder="Email" required autocomplete="email" />
+      <input type="password" name="password" placeholder="Password" required autocomplete="current-password" />
+      <button type="submit">Log in</button>
+    </form>
+
+    <form id="signup-form" class="form hidden">
+      <input type="text" name="name" placeholder="Display name" required maxlength="48" />
+      <input type="email" name="email" placeholder="Email" required autocomplete="email" />
+      <input type="password" name="password" placeholder="Password (min 8 chars)" required minlength="8" autocomplete="new-password" />
+      <button type="submit">Create account</button>
+    </form>
+
+    <p id="msg" class="msg"></p>
+  </main>
+
+  <script type="module">
+    import { login, register, getCurrentUser } from "./js/auth.js";
+    import { ensureProfile } from "./js/users.js";
+
+    if (await getCurrentUser()) location.replace("./chat.html");
+
+    const tabs = document.querySelectorAll(".tab");
+    const loginForm = document.getElementById("login-form");
+    const signupForm = document.getElementById("signup-form");
+    const msg = document.getElementById("msg");
+
+    tabs.forEach(t => t.addEventListener("click", () => {
+      tabs.forEach(x => x.classList.toggle("active", x === t));
+      const isLogin = t.dataset.tab === "login";
+      loginForm.classList.toggle("hidden", !isLogin);
+      signupForm.classList.toggle("hidden", isLogin);
+      msg.textContent = "";
+    }));
+
+    function show(text, isError = true) {
+      msg.textContent = text;
+      msg.classList.toggle("error", isError);
+    }
+
+    loginForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const data = new FormData(loginForm);
+      try {
+        await login(data.get("email"), data.get("password"));
+        location.replace("./chat.html");
+      } catch (err) {
+        show(err.message);
+      }
+    });
+
+    signupForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const data = new FormData(signupForm);
+      try {
+        const user = await register(data.get("email"), data.get("password"), data.get("name"));
+        await ensureProfile(user);
+        location.replace("./chat.html");
+      } catch (err) {
+        show(err.message);
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neer</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="css/style.css" />
+  <script type="module">
+    import { applyTheme } from "./js/theme.js";
+    applyTheme();
+  </script>
+</head>
+
+<body>
+  <main class="splash">
+    <h1>Neer</h1>
+    <p>Loading…</p>
+  </main>
+  <script type="module">
+    import { getCurrentUser } from "./js/auth.js";
+    const user = await getCurrentUser();
+    location.replace(user ? "./chat.html" : "./login.html");
+  </script>
+</body>
+
+</html>
