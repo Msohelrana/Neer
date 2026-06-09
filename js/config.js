@@ -12,6 +12,7 @@ export const COL_MESSAGES = "messages";
 export const COL_REACTIONS = "reactions";
 export const COL_RECEIPTS = "receipts";
 export const COL_PUSH_SUBS = "pushSubscriptions";
+export const COL_SIGNALING = "signaling";
 
 // Web Push public key (VAPID). Generate the keypair with
 //   npx web-push generate-vapid-keys

@@ -1101,6 +1101,72 @@ a:hover { text-decoration: underline; }
   user-select: none;
 }
 
+/* Voice-call overlay — full-screen Messenger-style */
+.call-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(80vmax 60vmax at 50% 0%, rgba(0, 121, 255, 0.25), transparent 60%),
+    var(--bg);
+  animation: fade-in 0.18s ease-out both;
+}
+.call-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 48px 20px;
+  width: 100%;
+  max-width: 420px;
+}
+.call-screen .avatar {
+  width: 132px;
+  height: 132px;
+  font-size: 3rem;
+  box-shadow: 0 12px 40px hsl(var(--hue) 65% 35% / 0.6),
+              inset 0 0 0 1px rgba(255,255,255,0.1);
+}
+.call-name {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--text);
+  text-align: center;
+  line-height: 1.2;
+}
+.call-status {
+  font-size: 1rem;
+  color: var(--muted);
+  letter-spacing: 0.4px;
+  font-variant-numeric: tabular-nums;
+}
+.call-controls {
+  display: flex;
+  gap: 28px;
+  margin-top: 28px;
+}
+.call-btn-circle {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: none;
+  background: var(--panel-2);
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.08s ease;
+}
+.call-btn-circle:hover  { background: var(--panel-3); }
+.call-btn-circle:active { transform: scale(0.94); }
+.call-btn-circle.danger { background: var(--danger); color: #fff; }
+.call-btn-circle.danger:hover { filter: brightness(1.1); background: var(--danger); }
+.call-btn-circle.mute.active { background: var(--accent); color: #fff; }
+.call-btn-circle svg { display: block; }
+
 /* Themed dialog (replaces window.alert / window.confirm) */
 .app-dialog {
   position: fixed;

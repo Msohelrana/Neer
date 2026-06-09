@@ -140,6 +140,15 @@
 
   <div class="reaction-popover hidden" id="reaction-popover" role="menu" aria-label="Quick reactions"></div>
 
+  <div class="call-overlay hidden" id="call-overlay" role="dialog" aria-modal="true" aria-label="Voice call">
+    <div class="call-screen">
+      <div class="call-avatar avatar" id="call-avatar" aria-hidden="true"></div>
+      <div class="call-name" id="call-name"></div>
+      <div class="call-status" id="call-status">Calling…</div>
+      <div class="call-controls" id="call-controls"></div>
+    </div>
+  </div>
+
   <script type="module">
     import {
       requireAuth,
@@ -178,6 +187,9 @@
     } from "./js/receipts.js";
     import { enablePush } from "./js/push.js";
     import { dialogAlert, dialogConfirm } from "./js/dialog.js";
+    import { Call } from "./js/call.js";
+    import { subscribeSignals } from "./js/signaling.js";
+    import { ID as AppwriteID } from "./js/appwrite.js";
     import {
       getCachedMessages,
       appendCachedMessage,
@@ -1319,12 +1331,155 @@
       toastTimer = setTimeout(() => toastEl.classList.remove("show"), duration);
     }
 
+    // ----- Voice call (WebRTC + Appwrite signaling) -----
+    const callOverlay  = document.getElementById("call-overlay");
+    const callAvatarEl = document.getElementById("call-avatar");
+    const callNameEl   = document.getElementById("call-name");
+    const callStatusEl = document.getElementById("call-status");
+    const callCtrlsEl  = document.getElementById("call-controls");
+    let activeCall = null;
+    let callTimer  = null;
+    let muted = false;
+
+    const CALL_ICON_END   = `<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .4-.23.74-.56.9-.98.48-1.87 1.1-2.66 1.85a.998.998 0 0 1-1.41 0L.29 13.08a.95.95 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48a.998.998 0 0 1-1.41 0c-.79-.74-1.69-1.36-2.67-1.85a1.01 1.01 0 0 1-.56-.9v-3.1A16.84 16.84 0 0 0 12 9z" fill="currentColor" transform="rotate(135 12 12)"/></svg>`;
+    const CALL_ICON_ACCEPT= `<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.5.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.4 21 3 13.6 3 4c0-.6.4-1 1-1h3.4c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.5.1.4 0 .8-.2 1l-2.2 2.3z" fill="currentColor"/></svg>`;
+    const CALL_ICON_MIC   = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z" fill="currentColor"/></svg>`;
+    const CALL_ICON_MUTE  = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23A6.94 6.94 0 0 0 19 11zm-4.02.17L15 11V5a3 3 0 0 0-6 0v.18l5.98 5.99zM4.27 3 3 4.27l6.01 6.01V11a3 3 0 0 0 3 3l1.66.83 4.07 4.07L19 17.73 4.27 3z" fill="currentColor"/></svg>`;
+
+    function callBtn(label, html, cls, onClick) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "call-btn-circle " + cls;
+      b.setAttribute("aria-label", label);
+      b.innerHTML = html;
+      b.addEventListener("click", onClick);
+      return b;
+    }
+
+    function showCallUI(other, status, controls) {
+      paintAvatar(callAvatarEl, other.$id, other.name || other.email);
+      callNameEl.textContent = other.name;
+      callStatusEl.textContent = status;
+      callCtrlsEl.innerHTML = "";
+      controls.forEach((c) => callCtrlsEl.appendChild(c));
+      callOverlay.classList.remove("hidden");
+    }
+
+    function hideCallUI() {
+      callOverlay.classList.add("hidden");
+      if (callTimer) { clearInterval(callTimer); callTimer = null; }
+    }
+
+    function startCallTimer() {
+      const start = Date.now();
+      if (callTimer) clearInterval(callTimer);
+      callTimer = setInterval(() => {
+        const s = Math.floor((Date.now() - start) / 1000);
+        const mm = String(Math.floor(s / 60)).padStart(2, "0");
+        const ss = String(s % 60).padStart(2, "0");
+        callStatusEl.textContent = `${mm}:${ss}`;
+      }, 1000);
+    }
+
+    function endActiveCall() {
+      if (!activeCall) return;
+      activeCall.hangup();
+      activeCall = null;
+      muted = false;
+      hideCallUI();
+    }
+
+    function wireCall(call, other) {
+      call.on("ringing", () => {
+        showCallUI(other, "Calling…", [
+          callBtn("End call", CALL_ICON_END, "end danger", endActiveCall),
+        ]);
+      });
+      call.on("connecting", () => callStatusEl.textContent = "Connecting…");
+      call.on("connected", () => {
+        muted = false;
+        startCallTimer();
+        callStatusEl.textContent = "00:00";
+        callCtrlsEl.innerHTML = "";
+        const muteBtn = callBtn("Toggle mute", CALL_ICON_MIC, "mute", () => {
+          muted = !muted;
+          call.setMuted(muted);
+          muteBtn.innerHTML = muted ? CALL_ICON_MUTE : CALL_ICON_MIC;
+          muteBtn.classList.toggle("active", muted);
+        });
+        callCtrlsEl.append(
+          muteBtn,
+          callBtn("End call", CALL_ICON_END, "end danger", endActiveCall),
+        );
+      });
+      call.on("ended", () => {
+        if (activeCall === call) {
+          activeCall = null;
+          hideCallUI();
+          showToast(`Call with ${other.name} ended`);
+        }
+      });
+    }
+
+    async function startOutgoingCall(other) {
+      if (activeCall) { showToast("Already on a call"); return; }
+      const callId = AppwriteID.unique();
+      const call = new Call(me, other, callId, "out");
+      activeCall = call;
+      wireCall(call, other);
+      try {
+        await call.startOutgoing();
+      } catch (err) {
+        endActiveCall();
+        dialogAlert("Couldn't start call: " + (err?.message || err));
+      }
+    }
+
+    async function handleIncomingCall(sig, other) {
+      if (activeCall) {
+        // Already busy — auto-decline by sending end.
+        const tmp = new Call(me, other, sig.callId, "in");
+        tmp.hangup();
+        return;
+      }
+      const callId = sig.callId;
+      const offer = sig._payload;
+      const ok = await dialogConfirm(`Incoming voice call from ${other.name}`, {
+        okLabel: "Accept", cancelLabel: "Decline",
+      });
+      if (!ok) {
+        const tmp = new Call(me, other, callId, "in");
+        tmp.hangup();
+        return;
+      }
+      const call = new Call(me, other, callId, "in");
+      activeCall = call;
+      wireCall(call, other);
+      try {
+        await call.acceptIncoming(offer);
+      } catch (err) {
+        endActiveCall();
+        dialogAlert("Couldn't accept call: " + (err?.message || err));
+      }
+    }
+
+    // Listen for signaling docs addressed to me.
+    subscribeSignals(me.$id, async (sig) => {
+      if (sig.type === "offer") {
+        const users = getCachedUserList(me.$id)?.users || [];
+        const other = users.find((u) => u.$id === sig.from);
+        if (other) handleIncomingCall(sig, other);
+      } else if (activeCall && activeCall.callId === sig.callId) {
+        await activeCall.handleSignal(sig);
+      }
+    });
+
     // ----- Composer "more" + thread-header action icons -----
     document.getElementById("more-btn").addEventListener("click", () => {
       showToast("Attachments coming soon");
     });
     document.getElementById("call-btn").addEventListener("click", () => {
-      showToast(activeOther ? `Voice call to ${activeOther.name || activeOther.email} is not available yet` : "");
+      if (activeOther) startOutgoingCall(activeOther);
     });
     document.getElementById("video-btn").addEventListener("click", () => {
       showToast(activeOther ? `Video call to ${activeOther.name || activeOther.email} is not available yet` : "");

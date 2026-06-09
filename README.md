@@ -93,6 +93,30 @@ See `functions/send-push/README.md` for the full setup. Schema in brief:
 
 - **Indexes**: `user_idx` on `userId`.
 
+### 1.6.6 Create the `signaling` collection (for voice calls)
+
+Stores tiny WebRTC handshake docs (offer / answer / ICE candidates) so the
+two peers can exchange them via Appwrite Realtime. Docs are auto-pruned at
+the end of each call.
+
+- **Collection ID**: `signaling`
+- **Permissions** (collection-level) — **Create**: `Users`
+- **Row security**: ON
+- **Attributes**:
+
+  | key     | type   | size | required |
+  |---------|--------|------|----------|
+  | callId  | String | 64   | yes      |
+  | from    | String | 64   | yes      |
+  | to      | String | 64   | yes      |
+  | type    | String | 16   | yes      |
+  | payload | String | 4000 | no       |
+
+- **Indexes**: `to_idx` on `to`.
+
+Document-level read/update/delete are granted to `Users` so either peer can
+clean up signaling rows after the call.
+
 ### 1.7 Create the `receipts` collection
 
 Powers the **Sent / Delivered / Seen** label under your last sent message. Each user keeps exactly one row per conversation, marking the timestamp of the most recent message they've seen.
