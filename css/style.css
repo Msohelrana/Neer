@@ -361,6 +361,7 @@ a:hover { text-decoration: underline; }
    Set --hue inline (deterministic from user id). */
 .avatar {
   --hue: 220;
+  position: relative;
   width: 38px;
   height: 38px;
   flex-shrink: 0;
@@ -380,6 +381,19 @@ a:hover { text-decoration: underline; }
   user-select: none;
   text-transform: uppercase;
 }
+.avatar.online::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #31a24c;
+  border: 2px solid var(--panel);
+  box-shadow: 0 0 6px rgba(49, 162, 76, 0.6);
+}
+.avatar.avatar-sm.online::after { width: 9px; height: 9px; border-width: 1.5px; }
 .avatar.avatar-sm { width: 32px; height: 32px; font-size: 0.82rem; }
 .avatar.avatar-lg { width: 44px; height: 44px; font-size: 1.05rem; }
 
@@ -1024,6 +1038,38 @@ a:hover { text-decoration: underline; }
    the next bubble in the thread. */
 .bubble:has(.bubble-reactions) { margin-bottom: 12px; }
 
+/* Read-receipt indicator — sits below the last "me" bubble */
+.receipt-indicator {
+  align-self: flex-end;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  color: var(--muted);
+  padding: 2px 6px 2px 4px;
+  margin-top: 2px;
+  letter-spacing: 0.2px;
+}
+.receipt-indicator.seen { color: var(--accent); }
+.receipt-avatar {
+  --hue: 220;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: #fff;
+  text-transform: uppercase;
+  background:
+    linear-gradient(135deg,
+      hsl(var(--hue) 75% 60%) 0%,
+      hsl(calc(var(--hue) + 50) 70% 45%) 100%);
+  box-shadow: 0 1px 4px hsl(var(--hue) 65% 35% / 0.4);
+  user-select: none;
+}
+
 /* Floating toast */
 .toast {
   position: fixed;
@@ -1216,76 +1262,60 @@ a:hover { text-decoration: underline; }
 .msg-sheet-panel {
   position: relative;
   width: 100%;
-  max-width: 480px;
+  max-width: 520px;
   background: var(--panel);
-  border: 1px solid var(--border-strong);
-  border-bottom: none;
-  border-radius: 20px 20px 0 0;
-  box-shadow: var(--shadow-md);
-  padding: 10px 16px max(16px, env(safe-area-inset-bottom));
+  border: none;
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.35);
+  padding: 8px 8px max(16px, env(safe-area-inset-bottom));
   animation: slide-up 0.22s ease-out both;
 }
 @media (min-width: 641px) {
   .msg-sheet { align-items: center; padding: 24px; }
   .msg-sheet-panel {
-    border-radius: 20px;
-    border-bottom: 1px solid var(--border-strong);
+    border-radius: 16px;
+    border: 1px solid var(--border-strong);
     animation: pop-in 0.18s ease-out both;
+    padding: 8px;
   }
 }
 @keyframes slide-up {
   from { transform: translateY(24px); opacity: 0; }
   to   { transform: none;             opacity: 1; }
 }
-.msg-sheet-handle {
-  width: 42px;
-  height: 4px;
-  border-radius: 4px;
-  background: var(--border-strong);
-  margin: 4px auto 12px;
-}
-.msg-sheet-preview {
-  font-size: 0.88rem;
-  color: var(--muted);
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px 14px;
-  margin-bottom: 14px;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-word;
-}
 .msg-sheet-actions {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
-  gap: 8px;
+  gap: 0;
 }
 .msg-sheet-action {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 14px 6px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
+  gap: 8px;
+  padding: 16px 6px;
+  background: transparent;
+  border: none;
   color: var(--text);
-  border-radius: 14px;
+  border-radius: 12px;
   cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.2px;
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.08s ease;
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+  transition: background 0.15s ease;
 }
-.msg-sheet-action:hover  { background: var(--panel-3); border-color: var(--border-strong); }
-.msg-sheet-action:active { transform: scale(0.97); }
+.msg-sheet-action:hover  { background: var(--panel-2); }
+.msg-sheet-action:active { background: var(--panel-3); }
 .msg-sheet-action-icon {
-  font-size: 1.4rem;
-  line-height: 1;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
 }
+.msg-sheet-action-icon svg { display: block; width: 100%; height: 100%; }
+.msg-sheet-action--danger .msg-sheet-action-icon { color: var(--danger); }
 
 /* Suppress iOS callout when long-pressing bubbles on touch screens */
 @media (pointer: coarse) {

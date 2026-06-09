@@ -4,6 +4,7 @@ const HIDDEN_PREFIX      = "neer:hidden";
 const USERS_PREFIX       = "neer:users";
 const PROFILE_OK_PREFIX  = "neer:profileok";
 const SEEN_PREFIX        = "neer:seen";
+const RECEIPT_PREFIX     = "neer:receipt";
 
 const msgKey        = (userId, conversationId) => `${MSG_PREFIX}:${userId}:${conversationId}`;
 const convKey       = (userId, pairKey)        => `${CONV_PREFIX}:${userId}:${pairKey}`;
@@ -11,6 +12,7 @@ const hiddenKey     = (userId)                 => `${HIDDEN_PREFIX}:${userId}`;
 const usersKey      = (userId)                 => `${USERS_PREFIX}:${userId}`;
 const profileOkKey  = (userId)                 => `${PROFILE_OK_PREFIX}:${userId}`;
 const seenKey       = (userId, conversationId) => `${SEEN_PREFIX}:${userId}:${conversationId}`;
+const receiptKey    = (userId, conversationId) => `${RECEIPT_PREFIX}:${userId}:${conversationId}`;
 
 function read(key) {
   try {
@@ -112,6 +114,15 @@ export function markSeen(userId, conversationId, timestamp) {
   const prev = read(seenKey(userId, conversationId));
   if (prev && prev >= timestamp) return;
   write(seenKey(userId, conversationId), timestamp);
+}
+
+// Stores the $id of the user's own receipt doc per conversation so we can
+// update it in place without a lookup query.
+export function getMyReceiptId(userId, conversationId) {
+  return read(receiptKey(userId, conversationId));
+}
+export function saveMyReceiptId(userId, conversationId, receiptId) {
+  write(receiptKey(userId, conversationId), receiptId);
 }
 
 export function removeCachedUser(meId, userId) {

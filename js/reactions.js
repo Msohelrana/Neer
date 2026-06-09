@@ -1,5 +1,6 @@
 import { client, databases, Query, ID, Permission, Role } from "./appwrite.js";
 import { DB_ID, COL_REACTIONS } from "./config.js";
+import { onCollection } from "./realtime.js";
 
 /**
  * Persistent message reactions. Each (messageId, userId) pair has at most one
@@ -45,8 +46,7 @@ export async function removeReaction(reactionId) {
 
 export function subscribeReactions(conversationId, handlers) {
   const { onCreate, onUpdate, onDelete } = handlers;
-  const channel = `databases.${DB_ID}.collections.${COL_REACTIONS}.documents`;
-  return client.subscribe(channel, (resp) => {
+  return onCollection(COL_REACTIONS, (resp) => {
     if (resp.payload?.conversationId !== conversationId) return;
     if (resp.events.some((e) => e.endsWith(".create"))) onCreate?.(resp.payload);
     else if (resp.events.some((e) => e.endsWith(".update"))) onUpdate?.(resp.payload);

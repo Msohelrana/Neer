@@ -10,3 +10,4 @@ export const COL_USERS = "users";
 export const COL_CONVERSATIONS = "conversations";
 export const COL_MESSAGES = "messages";
 export const COL_REACTIONS = "reactions";
+export const COL_RECEIPTS  = "receipts";

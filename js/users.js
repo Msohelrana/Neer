@@ -1,6 +1,7 @@
 import { client, databases, Query, Permission, Role } from "./appwrite.js";
 import { DB_ID, COL_USERS } from "./config.js";
 import { wasProfileEnsured, markProfileEnsured } from "./cache.js";
+import { onCollection } from "./realtime.js";
 
 /**
  * Create the user's profile document on first login.
@@ -58,13 +59,28 @@ export async function updateProfileName(userId, name) {
 }
 
 /**
+ * Bump my own `lastActiveAt` so other clients can render an "online" dot.
+ * Designed to be cheap: callers throttle to ~once a minute.
+ */
+export async function heartbeat(userId) {
+  try {
+    await databases.updateDocument(DB_ID, COL_USERS, userId, {
+      lastActiveAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    // Silently ignore — likely the `lastActiveAt` attribute isn't in the
+    // schema yet. Online dot stays off; rest of the app keeps working.
+    console.warn("heartbeat failed:", err?.message || err);
+  }
+}
+
+/**
  * Subscribe to the users collection so the sidebar can stay live without
  * polling. Realtime traffic doesn't count toward the read quota.
  */
 export function subscribeUsers(handlers) {
   const { onCreate, onUpdate, onDelete } = handlers;
-  const channel = `databases.${DB_ID}.collections.${COL_USERS}.documents`;
-  return client.subscribe(channel, (resp) => {
+  return onCollection(COL_USERS, (resp) => {
     const events = resp.events;
     if (events.some((e) => e.endsWith(".create"))) onCreate?.(resp.payload);
     else if (events.some((e) => e.endsWith(".update"))) onUpdate?.(resp.payload);

@@ -29,10 +29,11 @@ No build step, no npm install — just static files and the Appwrite Web SDK loa
   - **Create**: Role = `Users` (any logged-in user can create their own profile)
 - **Attributes**:
 
-  | key   | type   | size | required |
-  |-------|--------|------|----------|
-  | name  | String | 64   | yes      |
-  | email | String | 256  | yes      |
+  | key          | type   | size | required |
+  |--------------|--------|------|----------|
+  | name         | String | 64   | yes      |
+  | email        | String | 256  | yes      |
+  | lastActiveAt | String | 32   | no       |
 
 - **Indexes**:
   - `email_idx` — key `email`, type `key`, attribute `email` (so future lookups by email work)
@@ -74,7 +75,27 @@ No build step, no npm install — just static files and the Appwrite Web SDK loa
   - `conversation_idx` — key `conversation_idx`, type `key`, attribute `conversationId`
 - Document-level read is granted to `Users`; update/delete is restricted to the sender.
 
-### 1.7 Create the `reactions` collection
+### 1.7 Create the `receipts` collection
+
+Powers the **Sent / Delivered / Seen** label under your last sent message. Each user keeps exactly one row per conversation, marking the timestamp of the most recent message they've seen.
+
+- **Collection ID**: `receipts`
+- **Permissions** (collection-level):
+  - **Create**: Role = `Users`
+- **Row security**: **ON**
+- **Attributes**:
+
+  | key            | type   | size | required |
+  |----------------|--------|------|----------|
+  | conversationId | String | 64   | yes      |
+  | userId         | String | 64   | yes      |
+  | lastSeenAt     | String | 32   | yes      |
+
+- **Indexes**:
+  - `conversation_idx` — type `key`, attribute `conversationId`
+- Document-level read is granted to `Users`; update/delete is restricted to the receipt's owner.
+
+### 1.8 Create the `reactions` collection
 
 Powers the **React** action on the message-action sheet (❤️ 😆 😮 😢 😡 👍). Each user can have at most one reaction per message; switching emoji updates the same row.
 

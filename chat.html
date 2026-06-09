@@ -69,7 +69,7 @@
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
           <div class="composer-pill">
-            <textarea id="composer-input" placeholder="Type a message…" rows="1"></textarea>
+            <textarea id="composer-input" placeholder="Type a message…" rows="1" autocomplete="off"></textarea>
             <button type="button" id="emoji-btn" class="composer-inline-btn emoji-btn" aria-label="Open emoji picker" title="Emoji">
               <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm-3.5-9c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm7 0c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zM12 17.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z" fill="currentColor"/></svg>
             </button>
@@ -103,7 +103,7 @@
       <section class="modal-section">
         <h3>Display name</h3>
         <form id="name-form">
-          <input name="name" type="text" required maxlength="48" placeholder="Display name" />
+          <input name="name" type="text" required maxlength="48" placeholder="Display name" autocomplete="name" />
           <button type="submit">Save name</button>
         </form>
       </section>
@@ -118,6 +118,11 @@
       </section>
 
       <section class="modal-section">
+        <h3>Notifications</h3>
+        <button type="button" id="notify-btn" class="modal-secondary-btn">Enable notifications</button>
+      </section>
+
+      <section class="modal-section">
         <h3>Session</h3>
         <button type="button" id="logout-btn" class="modal-secondary-btn">Log out</button>
       </section>
@@ -129,8 +134,6 @@
   <div class="msg-sheet hidden" id="msg-sheet" role="dialog" aria-modal="true" aria-label="Message actions">
     <div class="msg-sheet-backdrop" data-close></div>
     <div class="msg-sheet-panel">
-      <div class="msg-sheet-handle" aria-hidden="true"></div>
-      <div class="msg-sheet-preview" id="msg-sheet-preview"></div>
       <div class="msg-sheet-actions" id="msg-sheet-actions"></div>
     </div>
   </div>
@@ -149,6 +152,7 @@
       listOtherUsers,
       updateProfileName,
       subscribeUsers,
+      heartbeat,
     } from "./js/users.js";
     import {
       getOrCreateConversation,
@@ -167,6 +171,12 @@
       subscribeReactions,
     } from "./js/reactions.js";
     import {
+      loadReceipts,
+      createReceipt,
+      updateReceipt,
+      subscribeReceipts,
+    } from "./js/receipts.js";
+    import {
       getCachedMessages,
       appendCachedMessage,
       updateCachedMessage,
@@ -181,6 +191,8 @@
       saveCachedConversation,
       getLastSeen,
       markSeen,
+      getMyReceiptId,
+      saveMyReceiptId,
     } from "./js/cache.js";
     import { getTheme, setTheme } from "./js/theme.js";
 
@@ -212,15 +224,29 @@
     const headerEl    = document.getElementById("thread-title");
     const messagesEl  = document.getElementById("messages");
 
-    document.getElementById("back-btn").addEventListener("click", () => {
+    function leaveActiveConversation() {
       chatEl.dataset.view = "sidebar";
-      // Leave the conversation so new messages in it can show as unread again.
       if (unsubscribe) { unsubscribe(); unsubscribe = null; }
       if (unsubscribeReactions) { unsubscribeReactions(); unsubscribeReactions = null; }
+      if (unsubscribeReceipts)  { unsubscribeReceipts();  unsubscribeReceipts  = null; }
       activeConversation = null;
       activeOther = null;
+      receiptsMap.clear();
       document.querySelectorAll(".user-item.active").forEach((el) => el.classList.remove("active"));
       repaintFromCache();
+    }
+
+    // Tapping the in-app back button: pop the history entry we pushed when
+    // opening this conversation. The popstate handler then closes the chat.
+    document.getElementById("back-btn").addEventListener("click", () => {
+      if (history.state && history.state.view === "thread") history.back();
+      else leaveActiveConversation();
+    });
+
+    // Map the phone/browser back button to "leave conversation" so the app
+    // doesn't quit while a chat is open.
+    window.addEventListener("popstate", () => {
+      if (activeConversation) leaveActiveConversation();
     });
     const composerEl  = document.getElementById("composer");
     const inputEl     = document.getElementById("composer-input");
@@ -233,11 +259,20 @@
     const bubbleMap = new Map(); // messageId -> bubble element
     const messageMap = new Map(); // messageId -> latest message object (for action sheet lookups)
     const reactionsMap = new Map(); // messageId -> array of reaction docs
+    const receiptsMap  = new Map(); // userId -> lastSeenAt (active conv only)
     let hiddenIds = new Set();
     let pendingReply = null;
     let unsubscribeReactions = null;
+    let unsubscribeReceipts  = null;
 
     const REACTION_EMOJIS = ["❤️", "😆", "😮", "😢", "😡", "👍"];
+    const ONLINE_THRESHOLD_MS = 2 * 60 * 1000;
+
+    function isOnline(user) {
+      if (!user?.lastActiveAt) return false;
+      const t = new Date(user.lastActiveAt).getTime();
+      return Number.isFinite(t) && (Date.now() - t) < ONLINE_THRESHOLD_MS;
+    }
 
     function formatTime(iso) {
       const d = new Date(iso);
@@ -390,6 +425,65 @@
     // local state before the network call so a fast second tap sees the
     // correct "mine" and goes down the update/remove path instead of creating
     // a duplicate doc.
+    // ----- Read receipts (sent / delivered / seen) -----
+    async function upsertMyReceipt(convId, timestamp) {
+      if (!timestamp) return;
+      const cachedId = getMyReceiptId(me.$id, convId);
+      try {
+        if (cachedId) {
+          await updateReceipt(cachedId, timestamp);
+          return;
+        }
+        const created = await createReceipt(convId, me.$id, timestamp);
+        saveMyReceiptId(me.$id, convId, created.$id);
+      } catch (err) {
+        // 404 → cached id is stale; recreate.
+        if (err?.code === 404) {
+          try {
+            const created = await createReceipt(convId, me.$id, timestamp);
+            saveMyReceiptId(me.$id, convId, created.$id);
+          } catch (e) { console.warn("Receipt recreate failed:", e?.message); }
+        } else {
+          console.warn("Receipt upsert failed:", err?.message || err);
+        }
+      }
+    }
+
+    function repaintReceiptIndicator() {
+      messagesEl.querySelectorAll(".receipt-indicator").forEach((el) => el.remove());
+      if (!activeConversation || !activeOther) return;
+      const meBubbles = messagesEl.querySelectorAll(".bubble.me");
+      if (!meBubbles.length) return;
+      const lastMine = meBubbles[meBubbles.length - 1];
+      const msg = messageMap.get(lastMine.dataset.id);
+      if (!msg) return;
+
+      const otherSeenAt = receiptsMap.get(activeOther.$id);
+      let status, isSeen = false;
+      if (otherSeenAt && otherSeenAt >= msg.$createdAt) {
+        status = "Seen"; isSeen = true;
+      } else if (otherSeenAt) {
+        status = "Delivered";
+      } else {
+        status = "Sent";
+      }
+
+      const ind = document.createElement("div");
+      ind.className = "receipt-indicator" + (isSeen ? " seen" : "");
+      if (isSeen) {
+        const av = document.createElement("span");
+        av.className = "receipt-avatar";
+        av.textContent = avatarInitial(activeOther.name || activeOther.email);
+        av.style.setProperty("--hue", String(avatarHue(activeOther.$id)));
+        ind.appendChild(av);
+      }
+      const txt = document.createElement("span");
+      txt.className = "receipt-text";
+      txt.textContent = status;
+      ind.appendChild(txt);
+      lastMine.insertAdjacentElement("afterend", ind);
+    }
+
     async function toggleReaction(messageId, emoji) {
       if (!activeConversation) return;
       const list = reactionsMap.get(messageId) || [];
@@ -473,8 +567,16 @@
 
     const msgSheet           = document.getElementById("msg-sheet");
     const msgSheetActions    = document.getElementById("msg-sheet-actions");
-    const msgSheetPreview    = document.getElementById("msg-sheet-preview");
     const reactionPopover    = document.getElementById("reaction-popover");
+
+    // SVG icons for the bottom action sheet (Messenger style)
+    const ICON_REPLY  = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z" fill="currentColor"/></svg>`;
+    const ICON_COPY   = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" fill="currentColor"/></svg>`;
+    const ICON_DELETE = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/></svg>`;
+    const ICON_MORE   = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" fill="currentColor"/></svg>`;
+    const ICON_EDIT   = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor"/></svg>`;
+    const ICON_BACK   = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const ICON_HIDE   = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27z" fill="currentColor"/></svg>`;
 
     function openReactionPopover(msg, bubble) {
       reactionPopover.innerHTML = "";
@@ -513,7 +615,6 @@
 
     function openMsgSheet(msg, bubble) {
       const isMine = msg.senderId === me.$id;
-      msgSheetPreview.textContent = msg.text;
       renderSheetMain(msg, isMine);
       msgSheet.classList.remove("hidden");
       if (bubble) openReactionPopover(msg, bubble);
@@ -525,17 +626,12 @@
       closeReactionPopover();
     }
 
-    function sheetBtn(label, icon, onClick) {
+    function sheetBtn(label, iconHtml, onClick, variant) {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "msg-sheet-action";
-      const ic = document.createElement("span");
-      ic.className = "msg-sheet-action-icon";
-      ic.textContent = icon;
-      const lb = document.createElement("span");
-      lb.className = "msg-sheet-action-label";
-      lb.textContent = label;
-      btn.append(ic, lb);
+      btn.className = "msg-sheet-action" + (variant ? " msg-sheet-action--" + variant : "");
+      btn.innerHTML = `<span class="msg-sheet-action-icon">${iconHtml}</span><span class="msg-sheet-action-label"></span>`;
+      btn.querySelector(".msg-sheet-action-label").textContent = label;
       btn.addEventListener("click", onClick);
       return btn;
     }
@@ -543,15 +639,14 @@
     function renderSheetMain(msg, isMine) {
       msgSheetActions.innerHTML = "";
       msgSheetActions.append(
-        sheetBtn("Reply", "↩", () => {
+        sheetBtn("Reply", ICON_REPLY, () => {
           closeMsgSheet();
           setReply(msg);
         }),
-        sheetBtn("Copy", "⎘", async () => {
+        sheetBtn("Copy", ICON_COPY, async () => {
           try {
             await navigator.clipboard.writeText(msg.text);
           } catch {
-            // Fallback for non-secure contexts.
             const ta = document.createElement("textarea");
             ta.value = msg.text;
             document.body.appendChild(ta);
@@ -561,11 +656,11 @@
           }
           closeMsgSheet();
         }),
-        sheetBtn("Delete", "🗑", () => renderSheetDelete(msg, isMine)),
+        sheetBtn("Delete", ICON_DELETE, () => renderSheetDelete(msg, isMine), "danger"),
       );
       if (isMine) {
         msgSheetActions.appendChild(
-          sheetBtn("More", "⋯", () => renderSheetMore(msg))
+          sheetBtn("More", ICON_MORE, () => renderSheetMore(msg))
         );
       }
     }
@@ -574,29 +669,29 @@
       msgSheetActions.innerHTML = "";
       if (isMine) {
         msgSheetActions.appendChild(
-          sheetBtn("For everyone", "🗑", async () => {
+          sheetBtn("For everyone", ICON_DELETE, async () => {
             closeMsgSheet();
             await removeForEveryone(msg);
-          })
+          }, "danger")
         );
       }
       msgSheetActions.append(
-        sheetBtn("For me", "🙈", () => {
+        sheetBtn("For me", ICON_HIDE, () => {
           closeMsgSheet();
           removeForMe(msg);
         }),
-        sheetBtn("Back", "←", () => renderSheetMain(msg, isMine)),
+        sheetBtn("Back", ICON_BACK, () => renderSheetMain(msg, isMine)),
       );
     }
 
     function renderSheetMore(msg) {
       msgSheetActions.innerHTML = "";
       msgSheetActions.append(
-        sheetBtn("Edit", "✎", () => {
+        sheetBtn("Edit", ICON_EDIT, () => {
           closeMsgSheet();
           startEdit(msg);
         }),
-        sheetBtn("Back", "←", () => renderSheetMain(msg, true)),
+        sheetBtn("Back", ICON_BACK, () => renderSheetMain(msg, true)),
       );
     }
 
@@ -693,6 +788,8 @@
       const threadAvatar = document.getElementById("thread-avatar");
       threadAvatar.classList.remove("hidden");
       paintAvatar(threadAvatar, other.$id, other.name || other.email);
+      const cachedOther = (getCachedUserList(me.$id)?.users || []).find((x) => x.$id === other.$id);
+      threadAvatar.classList.toggle("online", isOnline(cachedOther || other));
       document.getElementById("thread-actions").classList.remove("hidden");
 
       messagesEl.innerHTML = "";
@@ -700,9 +797,16 @@
       bubbleMap.clear();
       messageMap.clear();
       reactionsMap.clear();
+      receiptsMap.clear();
       setReply(null);
       hiddenIds = getHiddenIds(me.$id);
       composerEl.classList.remove("hidden");
+      // Push one history entry the first time we enter thread view so the
+      // phone/browser back button maps to "leave conversation" instead of
+      // exiting the app. Switching between conversations reuses the same entry.
+      if (!history.state || history.state.view !== "thread") {
+        history.pushState({ view: "thread" }, "");
+      }
       chatEl.dataset.view = "thread";
 
       document.querySelectorAll(".user-item").forEach(el => {
@@ -711,6 +815,7 @@
 
       if (unsubscribe) { unsubscribe(); unsubscribe = null; }
       if (unsubscribeReactions) { unsubscribeReactions(); unsubscribeReactions = null; }
+      if (unsubscribeReceipts)  { unsubscribeReceipts();  unsubscribeReceipts  = null; }
 
       activeConversation = await getOrCreateConversation(me.$id, other.$id);
       const convId = activeConversation.$id;
@@ -737,6 +842,9 @@
           appendCachedMessage(me.$id, convId, msg);
           renderMessage(msg);
           markSeen(me.$id, convId, msg.$createdAt);
+          // Update my receipt so the other side can flip my Sent → Seen.
+          if (msg.senderId !== me.$id) upsertMyReceipt(convId, msg.$createdAt);
+          repaintReceiptIndicator();
         },
         onUpdate: (msg) => {
           updateCachedMessage(me.$id, convId, msg.$id, {
@@ -760,6 +868,22 @@
         onUpdate: (r) => { ingestReaction(r);  paintReactions(r.messageId); },
         onDelete: (r) => { discardReaction(r); paintReactions(r.messageId); },
       });
+
+      // Receipts — load both participants' read state, upsert mine to the
+      // latest message, and stay subscribed for live Sent/Delivered/Seen flips.
+      const receiptDocs = await loadReceipts(convId);
+      if (receiptDocs !== null) {
+        receiptDocs.forEach((r) => receiptsMap.set(r.userId, r.lastSeenAt));
+        const latest = getCachedMessages(me.$id, convId).slice(-1)[0];
+        if (latest) upsertMyReceipt(convId, latest.$createdAt);
+        repaintReceiptIndicator();
+
+        unsubscribeReceipts = subscribeReceipts(convId, {
+          onCreate: (r) => { receiptsMap.set(r.userId, r.lastSeenAt); repaintReceiptIndicator(); },
+          onUpdate: (r) => { receiptsMap.set(r.userId, r.lastSeenAt); repaintReceiptIndicator(); },
+          onDelete: (r) => { receiptsMap.delete(r.userId);           repaintReceiptIndicator(); },
+        });
+      }
     }
 
     // Refetch the full user list from Appwrite at most this often. Realtime
@@ -786,7 +910,9 @@
             <span class="last-message"></span>
           </div>
         `;
-        paintAvatar(item.querySelector(".avatar"), u.$id, u.name || u.email);
+        const avEl = item.querySelector(".avatar");
+        paintAvatar(avEl, u.$id, u.name || u.email);
+        if (isOnline(u)) avEl.classList.add("online");
         item.querySelector(".name").textContent = u.name;
 
         // Last message preview + unread bolding (from local cache only).
@@ -831,6 +957,55 @@
     function repaintFromCache() {
       const cached = getCachedUserList(me.$id);
       paintUserList(cached?.users || []);
+      // Keep the thread-header avatar's online dot in sync too.
+      if (activeOther) {
+        const u = cached?.users.find((x) => x.$id === activeOther.$id);
+        document.getElementById("thread-avatar").classList.toggle("online", isOnline(u || activeOther));
+      }
+    }
+
+    // Presence heartbeat — bumps my lastActiveAt ~once a minute while the
+    // tab is visible, and immediately whenever the tab regains focus.
+    let lastBeatAt = 0;
+    async function beat() {
+      const now = Date.now();
+      if (now - lastBeatAt < 30_000) return;
+      lastBeatAt = now;
+      await heartbeat(me.$id);
+    }
+    beat();
+    setInterval(beat, 60_000);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") beat();
+    });
+    // Re-evaluate "online vs offline" every 30s so stale users grey out.
+    setInterval(repaintFromCache, 30_000);
+
+    // ----- Notifications -----
+    const notifyAvailable = () => "Notification" in window;
+    const notifyAllowed   = () => notifyAvailable() && Notification.permission === "granted";
+
+    function showMessageNotification(senderName, text, conversationId, otherUserId) {
+      if (!notifyAllowed()) return;
+      // Skip if the user is actively viewing this chat.
+      if (document.visibilityState === "visible" &&
+          activeConversation && activeConversation.$id === conversationId) return;
+      try {
+        const n = new Notification(senderName, {
+          body: text,
+          icon: "./icon.svg",
+          badge: "./icon.svg",
+          tag: conversationId,   // collapse multiple from same chat
+          renotify: true,
+        });
+        n.addEventListener("click", () => {
+          window.focus();
+          n.close();
+          const users = getCachedUserList(me.$id)?.users || [];
+          const user = users.find((u) => u.$id === otherUserId);
+          if (user) openConversation(user);
+        });
+      } catch (e) { /* some browsers reject from non-secure or unfocused contexts */ }
     }
 
     // Keep sidebar previews + unread state live across all conversations.
@@ -852,6 +1027,11 @@
         if (msg.senderId === me.$id ||
             (activeConversation && msg.conversationId === activeConversation.$id)) {
           markSeen(me.$id, msg.conversationId, msg.$createdAt);
+        }
+        // Notify on incoming messages from others.
+        if (msg.senderId !== me.$id) {
+          const sender = (getCachedUserList(me.$id)?.users || []).find((u) => u.$id === msg.senderId);
+          showMessageNotification(sender?.name || "New message", msg.text, msg.conversationId, msg.senderId);
         }
         repaintFromCache();
       },
@@ -900,12 +1080,8 @@
       }
     });
 
-    inputEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        composerEl.requestSubmit();
-      }
-    });
+    // Enter inserts a newline (default textarea behavior). Sending requires
+    // tapping the send button — intentionally no Enter-to-send shortcut.
 
     // ----- Composer: like/send toggle, emoji picker, reply preview -----
     const sendBtn          = document.getElementById("send-btn");
@@ -1078,11 +1254,50 @@
       });
     }
 
+    const notifyBtn = document.getElementById("notify-btn");
+    function refreshNotifyBtn() {
+      if (!notifyAvailable()) {
+        notifyBtn.textContent = "Notifications not supported";
+        notifyBtn.disabled = true;
+        return;
+      }
+      switch (Notification.permission) {
+        case "granted":
+          notifyBtn.textContent = "Notifications enabled ✓";
+          notifyBtn.disabled = true;
+          break;
+        case "denied":
+          notifyBtn.textContent = "Blocked — change in browser settings";
+          notifyBtn.disabled = true;
+          break;
+        default:
+          notifyBtn.textContent = "Enable notifications";
+          notifyBtn.disabled = false;
+      }
+    }
+    notifyBtn.addEventListener("click", async () => {
+      if (!notifyAvailable()) return;
+      try {
+        const result = await Notification.requestPermission();
+        if (result === "granted") {
+          try {
+            new Notification("Neer notifications enabled", {
+              body: "You'll get alerts for new messages.",
+              icon: "./icon.svg",
+              tag: "neer-test",
+            });
+          } catch {}
+        }
+      } catch {}
+      refreshNotifyBtn();
+    });
+
     function openSettings() {
       nameForm.elements.name.value = me.name || "";
       passwordForm.reset();
       showSettingsMsg("");
       syncThemeButtons();
+      refreshNotifyBtn();
       settingsModal.classList.remove("hidden");
     }
 

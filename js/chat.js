@@ -1,5 +1,6 @@
 import { client, databases, Query, ID, Permission, Role } from "./appwrite.js";
 import { DB_ID, COL_CONVERSATIONS, COL_MESSAGES } from "./config.js";
+import { onCollection } from "./realtime.js";
 import { getCachedConversation, saveCachedConversation } from "./cache.js";
 
 function pairKey(a, b) {
@@ -94,8 +95,7 @@ export async function deleteMessage(messageId) {
  */
 export function subscribeMessages(conversationId, handlers) {
   const { onCreate, onUpdate, onDelete } = handlers;
-  const channel = `databases.${DB_ID}.collections.${COL_MESSAGES}.documents`;
-  return client.subscribe(channel, (resp) => {
+  return onCollection(COL_MESSAGES, (resp) => {
     if (resp.payload?.conversationId !== conversationId) return;
     if (resp.events.some((e) => e.endsWith(".create"))) onCreate?.(resp.payload);
     else if (resp.events.some((e) => e.endsWith(".update"))) onUpdate?.(resp.payload);
@@ -110,8 +110,7 @@ export function subscribeMessages(conversationId, handlers) {
  */
 export function subscribeAllMessages(meId, handlers) {
   const { onCreate, onUpdate, onDelete } = handlers;
-  const channel = `databases.${DB_ID}.collections.${COL_MESSAGES}.documents`;
-  return client.subscribe(channel, (resp) => {
+  return onCollection(COL_MESSAGES, (resp) => {
     const msg = resp.payload;
     if (!msg || (msg.senderId !== meId && msg.receiverId !== meId)) return;
     if (resp.events.some((e) => e.endsWith(".create"))) onCreate?.(msg);
