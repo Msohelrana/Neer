@@ -177,6 +177,7 @@
       subscribeReceipts,
     } from "./js/receipts.js";
     import { enablePush } from "./js/push.js";
+    import { dialogAlert, dialogConfirm } from "./js/dialog.js";
     import {
       getCachedMessages,
       appendCachedMessage,
@@ -190,6 +191,8 @@
       removeCachedUser,
       getCachedConversation,
       saveCachedConversation,
+      deleteCachedConversation,
+      getDeletedAt,
       getLastSeen,
       markSeen,
       getMyReceiptId,
@@ -199,6 +202,20 @@
 
     const me = await requireAuth();
     await ensureProfile(me);
+
+    // Match the chat container to the *visible* viewport (excludes the
+    // mobile soft keyboard). Keeps the thread header pinned at the top and
+    // the composer pinned right above the keyboard, Messenger-style.
+    function syncAppHeight() {
+      const h = window.visualViewport?.height || window.innerHeight;
+      document.documentElement.style.setProperty("--app-h", h + "px");
+      const m = document.getElementById("messages");
+      if (m) m.scrollTop = m.scrollHeight;
+    }
+    syncAppHeight();
+    window.visualViewport?.addEventListener("resize", syncAppHeight);
+    window.visualViewport?.addEventListener("scroll", syncAppHeight);
+    window.addEventListener("resize", syncAppHeight);
 
     function avatarHue(seed) {
       let h = 0;
@@ -245,8 +262,14 @@
     });
 
     // Map the phone/browser back button to "leave conversation" so the app
-    // doesn't quit while a chat is open.
+    // doesn't quit while a chat is open. Settings modal takes priority — back
+    // closes it first, then (next back) leaves the active conversation.
     window.addEventListener("popstate", () => {
+      const sm = document.getElementById("settings-modal");
+      if (sm && !sm.classList.contains("hidden")) {
+        sm.classList.add("hidden");
+        return;
+      }
       if (activeConversation) leaveActiveConversation();
     });
     const composerEl  = document.getElementById("composer");
@@ -344,6 +367,7 @@
       if (renderedIds.has(msg.$id)) return;
       renderedIds.add(msg.$id);
       messageMap.set(msg.$id, msg);
+      messagesEl.querySelector(".empty-conv")?.remove();
       const wrap = document.createElement("div");
       wrap.className = "bubble " + (msg.senderId === me.$id ? "me" : "them");
       wrap.dataset.id = msg.$id;
@@ -353,6 +377,23 @@
       bubbleMap.set(msg.$id, wrap);
       paintReactions(msg.$id);
       messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function showEmptyConvState() {
+      if (!activeOther) return;
+      if (messagesEl.querySelector(".bubble")) return;
+      if (messagesEl.querySelector(".empty-conv")) return;
+      const el = document.createElement("div");
+      el.className = "empty-conv";
+      el.innerHTML = `
+        <div class="empty-conv-avatar avatar" aria-hidden="true"></div>
+        <div class="empty-conv-name"></div>
+        <div class="empty-conv-sub"></div>
+      `;
+      paintAvatar(el.querySelector(".avatar"), activeOther.$id, activeOther.name || activeOther.email);
+      el.querySelector(".empty-conv-name").textContent = activeOther.name;
+      el.querySelector(".empty-conv-sub").textContent = "Say hi 👋";
+      messagesEl.appendChild(el);
     }
 
     function applyMessageUpdate(msg) {
@@ -370,6 +411,7 @@
       if (bubble) bubble.remove();
       bubbleMap.delete(messageId);
       renderedIds.delete(messageId);
+      if (!messagesEl.querySelector(".bubble")) showEmptyConvState();
     }
 
     // ----- Reactions -----
@@ -505,7 +547,7 @@
         } catch (err) {
           discardReaction({ $id: tempId, messageId });
           paintReactions(messageId);
-          alert("Reaction failed: " + (err?.message || err));
+          dialogAlert("Reaction failed: " + (err?.message || err));
         }
         return;
       }
@@ -518,7 +560,7 @@
         } catch (err) {
           ingestReaction(mine); // rollback
           paintReactions(messageId);
-          alert("Reaction failed: " + (err?.message || err));
+          dialogAlert("Reaction failed: " + (err?.message || err));
         }
         return;
       }
@@ -531,7 +573,7 @@
       } catch (err) {
         ingestReaction({ ...mine, emoji: prevEmoji }); // rollback
         paintReactions(messageId);
-        alert("Reaction failed: " + (err?.message || err));
+        dialogAlert("Reaction failed: " + (err?.message || err));
       }
     }
 
@@ -696,6 +738,55 @@
       );
     }
 
+    // Generic long-press / right-click binder used by sidebar user items.
+    function bindLongPress(el, onLong, onTap) {
+      let fired = false, timer = null, sx = 0, sy = 0;
+      const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+      el.addEventListener("pointerdown", (e) => {
+        if (e.button !== undefined && e.button !== 0) return;
+        fired = false;
+        sx = e.clientX; sy = e.clientY;
+        timer = setTimeout(() => { fired = true; onLong(); }, 480);
+      });
+      el.addEventListener("pointermove", (e) => {
+        if (timer && (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10)) cancel();
+      });
+      ["pointerup", "pointerleave", "pointercancel"].forEach((t) => el.addEventListener(t, cancel));
+      el.addEventListener("click", (e) => {
+        if (fired) { e.stopPropagation(); fired = false; return; }
+        onTap?.();
+      });
+      el.addEventListener("contextmenu", (e) => { e.preventDefault(); onLong(); });
+    }
+
+    // Action sheet for a sidebar chat item — currently just "Delete chat".
+    function openChatSheet(other) {
+      msgSheetActions.innerHTML = "";
+      msgSheetActions.append(
+        sheetBtn("Delete chat", ICON_DELETE, async () => {
+          closeMsgSheet();
+          const ok = await dialogConfirm(
+            `Delete chat with ${other.name} from this device?\nMessages on the server are not affected.`,
+            { okLabel: "Delete", danger: true }
+          );
+          if (ok) deleteChatLocally(other);
+        }, "danger"),
+        sheetBtn("Cancel", ICON_BACK, closeMsgSheet),
+      );
+      msgSheet.classList.remove("hidden");
+    }
+
+    function deleteChatLocally(other) {
+      const pairKey = [me.$id, other.$id].sort().join("_");
+      const conv = deleteCachedConversation(me.$id, pairKey);
+      if (!conv) return;
+      // If this was the active conversation, leave it.
+      if (activeConversation && activeConversation.$id === conv.$id) {
+        leaveActiveConversation();
+      }
+      repaintFromCache();
+    }
+
     msgSheet.addEventListener("click", (e) => {
       if (e.target.dataset.close !== undefined) closeMsgSheet();
     });
@@ -747,7 +838,7 @@
           bubble.classList.remove("editing");
           paintBubbleContent(bubble, msg);
         } catch (err) {
-          alert("Edit failed: " + err.message);
+          dialogAlert("Edit failed: " + err.message);
         }
       });
 
@@ -758,14 +849,18 @@
     }
 
     async function removeForEveryone(msg) {
-      if (!confirm("Remove this message for everyone? This cannot be undone.")) return;
+      const ok = await dialogConfirm(
+        "Remove this message for everyone? This cannot be undone.",
+        { okLabel: "Remove", danger: true }
+      );
+      if (!ok) return;
       try {
         await deleteMessage(msg.$id);
         // Realtime delete event will also clean up DOM + cache, but do it locally now too.
         removeCachedMessage(me.$id, activeConversation.$id, msg.$id);
         applyMessageDelete(msg.$id);
       } catch (err) {
-        alert("Delete failed: " + err.message);
+        dialogAlert("Delete failed: " + err.message);
       }
     }
 
@@ -781,10 +876,7 @@
       const nameEl = document.createElement("span");
       nameEl.className = "name";
       nameEl.textContent = other.name;
-      const subEl = document.createElement("span");
-      subEl.className = "sub";
-      subEl.textContent = other.email;
-      headerEl.append(nameEl, subEl);
+      headerEl.append(nameEl);
 
       const threadAvatar = document.getElementById("thread-avatar");
       threadAvatar.classList.remove("hidden");
@@ -800,6 +892,9 @@
       reactionsMap.clear();
       receiptsMap.clear();
       setReply(null);
+      // Show the "Send a message to start chatting" placeholder right away;
+      // it'll be removed the moment the first bubble lands.
+      showEmptyConvState();
       hiddenIds = getHiddenIds(me.$id);
       composerEl.classList.remove("hidden");
       // Push one history entry the first time we enter thread view so the
@@ -824,7 +919,9 @@
       const cached = getCachedMessages(me.$id, convId);
       cached.forEach(renderMessage);
 
-      const since = cached.length ? cached[cached.length - 1].$createdAt : null;
+      let since = cached.length ? cached[cached.length - 1].$createdAt : null;
+      const deletedAt = getDeletedAt(me.$id, convId);
+      if (deletedAt && (!since || deletedAt > since)) since = deletedAt;
       const fresh = await loadMessages(convId, since);
       fresh.forEach((msg) => {
         appendCachedMessage(me.$id, convId, msg);
@@ -836,6 +933,8 @@
       if (all.length) {
         markSeen(me.$id, convId, all[all.length - 1].$createdAt);
         repaintFromCache();
+      } else {
+        showEmptyConvState();
       }
 
       unsubscribe = subscribeMessages(convId, {
@@ -930,7 +1029,7 @@
             if (isUnread) item.classList.add("unread");
           }
         }
-        item.addEventListener("click", () => openConversation(u));
+        bindLongPress(item, () => openChatSheet(u), () => openConversation(u));
         userListEl.appendChild(item);
       });
     }
@@ -1074,7 +1173,7 @@
       try {
         await sendMessage(activeConversation, me.$id, text, reply);
       } catch (err) {
-        alert("Failed to send: " + err.message);
+        dialogAlert("Failed to send: " + err.message);
         inputEl.value = text;
         setReply(reply);
         refreshComposerMode();
@@ -1116,7 +1215,7 @@
       try {
         await sendMessage(activeConversation, me.$id, "👍", reply);
       } catch (err) {
-        alert("Failed to send: " + err.message);
+        dialogAlert("Failed to send: " + err.message);
         setReply(reply);
       }
     });
@@ -1321,10 +1420,21 @@
       syncThemeButtons();
       refreshNotifyBtn();
       settingsModal.classList.remove("hidden");
+      // Push a history entry so the phone/browser back button closes the
+      // settings modal instead of exiting the app.
+      if (!history.state || history.state.view !== "settings") {
+        history.pushState({ view: "settings" }, "");
+      }
     }
 
     function closeSettings() {
-      settingsModal.classList.add("hidden");
+      // If we own a "settings" history entry, pop it — popstate will hide the
+      // modal. Otherwise hide directly (defensive fallback).
+      if (history.state && history.state.view === "settings") {
+        history.back();
+      } else {
+        settingsModal.classList.add("hidden");
+      }
     }
 
     document.getElementById("settings-btn").addEventListener("click", openSettings);

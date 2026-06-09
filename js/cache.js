@@ -5,6 +5,7 @@ const USERS_PREFIX       = "neer:users";
 const PROFILE_OK_PREFIX  = "neer:profileok";
 const SEEN_PREFIX        = "neer:seen";
 const RECEIPT_PREFIX     = "neer:receipt";
+const DELETED_PREFIX     = "neer:deleted";
 
 const msgKey        = (userId, conversationId) => `${MSG_PREFIX}:${userId}:${conversationId}`;
 const convKey       = (userId, pairKey)        => `${CONV_PREFIX}:${userId}:${pairKey}`;
@@ -13,6 +14,7 @@ const usersKey      = (userId)                 => `${USERS_PREFIX}:${userId}`;
 const profileOkKey  = (userId)                 => `${PROFILE_OK_PREFIX}:${userId}`;
 const seenKey       = (userId, conversationId) => `${SEEN_PREFIX}:${userId}:${conversationId}`;
 const receiptKey    = (userId, conversationId) => `${RECEIPT_PREFIX}:${userId}:${conversationId}`;
+const deletedKey    = (userId, conversationId) => `${DELETED_PREFIX}:${userId}:${conversationId}`;
 
 function read(key) {
   try {
@@ -123,6 +125,28 @@ export function getMyReceiptId(userId, conversationId) {
 }
 export function saveMyReceiptId(userId, conversationId, receiptId) {
   write(receiptKey(userId, conversationId), receiptId);
+}
+
+// Wipe every locally-cached trace of a conversation and stamp a "deleted at"
+// cutoff so old server-side messages don't get refetched on reopen. The conv
+// stub itself is kept (saves a refetch) and the cutoff is what makes the
+// deletion sticky — loadMessages uses it as the `since` filter.
+export function deleteCachedConversation(userId, pairKey) {
+  const conv = getCachedConversation(userId, pairKey);
+  if (!conv) return null;
+  try {
+    localStorage.removeItem(msgKey(userId, conv.$id));
+    localStorage.removeItem(seenKey(userId, conv.$id));
+    localStorage.removeItem(receiptKey(userId, conv.$id));
+    write(deletedKey(userId, conv.$id), new Date().toISOString());
+  } catch (err) {
+    console.warn("deleteCachedConversation failed:", err);
+  }
+  return conv;
+}
+
+export function getDeletedAt(userId, conversationId) {
+  return read(deletedKey(userId, conversationId)) || "";
 }
 
 export function removeCachedUser(meId, userId) {

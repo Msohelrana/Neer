@@ -90,8 +90,8 @@ html, body {
 html, body { overflow: hidden; overscroll-behavior: none; }
 
 body {
-  height: 100dvh;
-  min-height: 100dvh;
+  height: var(--app-h, 100dvh);
+  min-height: 0;
   background:
     var(--ambient),
     var(--bg);
@@ -227,8 +227,7 @@ a:hover { text-decoration: underline; }
   display: grid;
   grid-template-columns: 320px 1fr;
   grid-template-rows: minmax(0, 1fr);
-  height: 100vh;
-  height: 100dvh;
+  height: var(--app-h, 100dvh);
   overflow: hidden;
 }
 
@@ -475,6 +474,38 @@ a:hover { text-decoration: underline; }
   scroll-behavior: smooth;
 }
 .messages .placeholder { margin: auto; color: var(--muted); }
+
+/* Empty conversation state — big avatar + name when no messages exist yet */
+.empty-conv {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 28px 20px;
+  text-align: center;
+  user-select: none;
+}
+.empty-conv .avatar {
+  width: 96px;
+  height: 96px;
+  font-size: 2.2rem;
+  margin-bottom: 6px;
+}
+.empty-conv .avatar.online::after {
+  width: 16px; height: 16px; border-width: 2.5px;
+}
+.empty-conv-name {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+}
+.empty-conv-sub {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
 
 .bubble {
   position: relative;
@@ -1069,6 +1100,70 @@ a:hover { text-decoration: underline; }
   box-shadow: 0 1px 4px hsl(var(--hue) 65% 35% / 0.4);
   user-select: none;
 }
+
+/* Themed dialog (replaces window.alert / window.confirm) */
+.app-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.app-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  animation: fade-in 0.16s ease-out both;
+}
+.app-dialog-panel {
+  position: relative;
+  width: 100%;
+  max-width: 380px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  box-shadow: var(--shadow-md);
+  padding: 22px;
+  animation: pop-in 0.18s ease-out both;
+}
+.app-dialog-msg {
+  font-size: 0.95rem;
+  line-height: 1.45;
+  margin-bottom: 18px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.app-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.app-dialog-actions button {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.15s ease, filter 0.15s ease;
+  min-width: 84px;
+}
+.app-dialog-actions .secondary {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.app-dialog-actions .secondary:hover { background: var(--panel-3); }
+.app-dialog-actions .primary {
+  background: var(--accent);
+  color: #fff;
+}
+.app-dialog-actions .primary:hover  { filter: brightness(1.08); }
+.app-dialog-actions .primary:active { transform: translateY(1px); }
+.app-dialog-actions .primary.danger { background: var(--danger); }
 
 /* Floating toast */
 .toast {
