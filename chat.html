@@ -176,6 +176,7 @@
       updateReceipt,
       subscribeReceipts,
     } from "./js/receipts.js";
+    import { enablePush } from "./js/push.js";
     import {
       getCachedMessages,
       appendCachedMessage,
@@ -1280,6 +1281,9 @@
       try {
         const result = await Notification.requestPermission();
         if (result === "granted") {
+          // Subscribe this device to Web Push so notifications also arrive
+          // when the tab is closed (handled by the send-push function).
+          enablePush(me.$id).catch((e) => console.warn("Push subscribe:", e));
           try {
             new Notification("Neer notifications enabled", {
               body: "You'll get alerts for new messages.",
@@ -1291,6 +1295,24 @@
       } catch {}
       refreshNotifyBtn();
     });
+
+    // If permission was previously granted, re-subscribe on each load so the
+    // user's push endpoint stays current (browsers rotate endpoints periodically).
+    if ("Notification" in window && Notification.permission === "granted") {
+      enablePush(me.$id).catch((e) => console.warn("Push re-subscribe:", e));
+    }
+
+    // Service-worker → page bridge: when a push notification is clicked, the
+    // SW posts a message asking us to open the right conversation.
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.addEventListener("message", (event) => {
+        if (event.data?.type !== "open-conversation") return;
+        const otherUserId = event.data.otherUserId;
+        const users = getCachedUserList(me.$id)?.users || [];
+        const user = users.find((u) => u.$id === otherUserId);
+        if (user) openConversation(user);
+      });
+    }
 
     function openSettings() {
       nameForm.elements.name.value = me.name || "";

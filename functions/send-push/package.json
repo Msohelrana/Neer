@@ -1,0 +1,10 @@
+{
+  "name": "send-push",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/main.js",
+  "dependencies": {
+    "node-appwrite": "^14.0.0",
+    "web-push": "^3.6.7"
+  }
+}

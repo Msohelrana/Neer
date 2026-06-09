@@ -75,6 +75,24 @@ No build step, no npm install — just static files and the Appwrite Web SDK loa
   - `conversation_idx` — key `conversation_idx`, type `key`, attribute `conversationId`
 - Document-level read is granted to `Users`; update/delete is restricted to the sender.
 
+### 1.6.5 Create the `pushSubscriptions` collection (optional — for true closed-app push)
+
+See `functions/send-push/README.md` for the full setup. Schema in brief:
+
+- **Collection ID**: `pushSubscriptions`
+- **Permissions** (collection-level) — **Create**: `Users`
+- **Row security**: ON
+- **Attributes**:
+
+  | key      | type   | size | required |
+  |----------|--------|------|----------|
+  | userId   | String | 64   | yes      |
+  | endpoint | String | 500  | yes      |
+  | p256dh   | String | 256  | yes      |
+  | auth     | String | 64   | yes      |
+
+- **Indexes**: `user_idx` on `userId`.
+
 ### 1.7 Create the `receipts` collection
 
 Powers the **Sent / Delivered / Seen** label under your last sent message. Each user keeps exactly one row per conversation, marking the timestamp of the most recent message they've seen.

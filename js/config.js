@@ -10,4 +10,11 @@ export const COL_USERS = "users";
 export const COL_CONVERSATIONS = "conversations";
 export const COL_MESSAGES = "messages";
 export const COL_REACTIONS = "reactions";
-export const COL_RECEIPTS  = "receipts";
+export const COL_RECEIPTS = "receipts";
+export const COL_PUSH_SUBS = "pushSubscriptions";
+
+// Web Push public key (VAPID). Generate the keypair with
+//   npx web-push generate-vapid-keys
+// then paste the public key here and the private key into the send-push
+// Appwrite function's env (VAPID_PRIVATE_KEY).
+export const VAPID_PUBLIC_KEY = "BDd1jvwR8SlKaP4PclcpsBULsAiMeZKw7_HVWAgNq1AzZopnRWA0-0XH_JdSE7SGIxKoSjIHZK-ge1F4sjkUaw4";
