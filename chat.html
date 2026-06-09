@@ -762,9 +762,10 @@
       });
     }
 
-    // Refetch the full user list from Appwrite at most this often.
-    // Realtime keeps the cache live in between, so this is just a fallback.
-    const USER_LIST_TTL_MS = 12 * 60 * 60 * 1000;
+    // Refetch the full user list from Appwrite at most this often. Realtime
+    // keeps the cache live in between, but a shorter TTL lets clients that
+    // were offline during a user-doc delete catch up sooner.
+    const USER_LIST_TTL_MS = 30 * 60 * 1000;
 
     function paintUserList(users) {
       if (!users || !users.length) {
@@ -809,7 +810,9 @@
 
     async function renderUserList() {
       const cached = getCachedUserList(me.$id);
-      const stale = !cached || (Date.now() - cached.fetchedAt) > USER_LIST_TTL_MS;
+      const stale = !cached
+        || !cached.users?.length
+        || (Date.now() - cached.fetchedAt) > USER_LIST_TTL_MS;
 
       if (cached) paintUserList(cached.users);
 
