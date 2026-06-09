@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0e1116"/>
+  <path d="M112 168 Q112 120 160 120 L352 120 Q400 120 400 168 L400 296 Q400 344 352 344 L256 344 L176 408 L176 344 L160 344 Q112 344 112 296 Z" fill="#4f8cff"/>
+  <text x="256" y="288" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif" font-size="170" font-weight="800" text-anchor="middle" fill="#ffffff">N</text>
+</svg>

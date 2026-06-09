@@ -55,18 +55,23 @@ export async function loadMessages(conversationId, since) {
   return res.documents;
 }
 
-export async function sendMessage(conversation, meId, text) {
+export async function sendMessage(conversation, meId, text, reply) {
   const otherId = conversation.participants.find((p) => p !== meId);
+  const data = {
+    conversationId: conversation.$id,
+    senderId: meId,
+    receiverId: otherId,
+    text,
+  };
+  if (reply?.id) {
+    data.replyToId   = reply.id;
+    data.replyToText = (reply.text || "").slice(0, 280);
+  }
   return databases.createDocument(
     DB_ID,
     COL_MESSAGES,
     ID.unique(),
-    {
-      conversationId: conversation.$id,
-      senderId: meId,
-      receiverId: otherId,
-      text,
-    },
+    data,
     [
       Permission.read(Role.users()),
       Permission.update(Role.user(meId)),
@@ -95,5 +100,22 @@ export function subscribeMessages(conversationId, handlers) {
     if (resp.events.some((e) => e.endsWith(".create"))) onCreate?.(resp.payload);
     else if (resp.events.some((e) => e.endsWith(".update"))) onUpdate?.(resp.payload);
     else if (resp.events.some((e) => e.endsWith(".delete"))) onDelete?.(resp.payload);
+  });
+}
+
+/**
+ * Global message subscription — fires for any message in the collection where
+ * the current user is sender or receiver. Used by the sidebar to keep last-
+ * message previews and unread badges live across all conversations.
+ */
+export function subscribeAllMessages(meId, handlers) {
+  const { onCreate, onUpdate, onDelete } = handlers;
+  const channel = `databases.${DB_ID}.collections.${COL_MESSAGES}.documents`;
+  return client.subscribe(channel, (resp) => {
+    const msg = resp.payload;
+    if (!msg || (msg.senderId !== meId && msg.receiverId !== meId)) return;
+    if (resp.events.some((e) => e.endsWith(".create"))) onCreate?.(msg);
+    else if (resp.events.some((e) => e.endsWith(".update"))) onUpdate?.(msg);
+    else if (resp.events.some((e) => e.endsWith(".delete"))) onDelete?.(msg);
   });
 }

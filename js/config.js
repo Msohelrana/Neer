@@ -9,3 +9,4 @@ export const DB_ID = "6a268f90000c630a4d44";
 export const COL_USERS = "users";
 export const COL_CONVERSATIONS = "conversations";
 export const COL_MESSAGES = "messages";
+export const COL_REACTIONS = "reactions";

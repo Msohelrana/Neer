@@ -5,10 +5,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Neer</title>
-  <link rel="icon" href="data:," />
+  <meta name="theme-color" content="#0e1116" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
   <link rel="stylesheet" href="css/style.css" />
   <script type="module">
     import { applyTheme } from "./js/theme.js";
+    import "./js/pwa.js";
     applyTheme();
   </script>
 </head>

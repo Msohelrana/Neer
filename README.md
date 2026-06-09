@@ -67,10 +67,33 @@ No build step, no npm install — just static files and the Appwrite Web SDK loa
   | senderId       | String | 64   | yes      |
   | receiverId     | String | 64   | yes      |
   | text           | String | 2000 | yes      |
+  | replyToId      | String | 64   | no       |
+  | replyToText    | String | 280  | no       |
 
 - **Indexes**:
   - `conversation_idx` — key `conversation_idx`, type `key`, attribute `conversationId`
 - Document-level read is granted to `Users`; update/delete is restricted to the sender.
+
+### 1.7 Create the `reactions` collection
+
+Powers the **React** action on the message-action sheet (❤️ 😆 😮 😢 😡 👍). Each user can have at most one reaction per message; switching emoji updates the same row.
+
+- **Collection ID**: `reactions`
+- **Permissions** (collection-level):
+  - **Create**: Role = `Users`
+- **Row security**: **ON**
+- **Attributes**:
+
+  | key            | type   | size | required |
+  |----------------|--------|------|----------|
+  | conversationId | String | 64   | yes      |
+  | messageId      | String | 64   | yes      |
+  | userId         | String | 64   | yes      |
+  | emoji          | String | 16   | yes      |
+
+- **Indexes**:
+  - `conversation_idx` — type `key`, attribute `conversationId`
+- Document-level read is granted to `Users`; update/delete is restricted to the reactor.
 
 ---
 

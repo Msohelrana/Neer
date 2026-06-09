@@ -1,10 +1,16 @@
-const MSG_PREFIX    = "neer:msgs";
-const CONV_PREFIX   = "neer:conv";
-const HIDDEN_PREFIX = "neer:hidden";
+const MSG_PREFIX         = "neer:msgs";
+const CONV_PREFIX        = "neer:conv";
+const HIDDEN_PREFIX      = "neer:hidden";
+const USERS_PREFIX       = "neer:users";
+const PROFILE_OK_PREFIX  = "neer:profileok";
+const SEEN_PREFIX        = "neer:seen";
 
-const msgKey    = (userId, conversationId) => `${MSG_PREFIX}:${userId}:${conversationId}`;
-const convKey   = (userId, pairKey)        => `${CONV_PREFIX}:${userId}:${pairKey}`;
-const hiddenKey = (userId)                 => `${HIDDEN_PREFIX}:${userId}`;
+const msgKey        = (userId, conversationId) => `${MSG_PREFIX}:${userId}:${conversationId}`;
+const convKey       = (userId, pairKey)        => `${CONV_PREFIX}:${userId}:${pairKey}`;
+const hiddenKey     = (userId)                 => `${HIDDEN_PREFIX}:${userId}`;
+const usersKey      = (userId)                 => `${USERS_PREFIX}:${userId}`;
+const profileOkKey  = (userId)                 => `${PROFILE_OK_PREFIX}:${userId}`;
+const seenKey       = (userId, conversationId) => `${SEEN_PREFIX}:${userId}:${conversationId}`;
 
 function read(key) {
   try {
@@ -65,4 +71,55 @@ export function hideMessageLocally(userId, messageId) {
   const set = getHiddenIds(userId);
   set.add(messageId);
   write(hiddenKey(userId), [...set]);
+}
+
+// One-shot flag: skip the `getDocument` in ensureProfile after first success.
+export function wasProfileEnsured(userId) {
+  return read(profileOkKey(userId)) === true;
+}
+
+export function markProfileEnsured(userId) {
+  write(profileOkKey(userId), true);
+}
+
+// User list cache. Returns { users, fetchedAt } or null.
+export function getCachedUserList(meId) {
+  return read(usersKey(meId));
+}
+
+export function saveCachedUserList(meId, users) {
+  write(usersKey(meId), { users, fetchedAt: Date.now() });
+}
+
+export function upsertCachedUser(meId, user) {
+  const cached = getCachedUserList(meId);
+  if (!cached) return false;
+  const i = cached.users.findIndex((u) => u.$id === user.$id);
+  if (i === -1) cached.users.push(user);
+  else cached.users[i] = { ...cached.users[i], ...user };
+  cached.users.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  write(usersKey(meId), cached);
+  return true;
+}
+
+// Last-seen ISO timestamp per conversation. Used to bold unread chat-list items.
+export function getLastSeen(userId, conversationId) {
+  return read(seenKey(userId, conversationId)) || "";
+}
+
+export function markSeen(userId, conversationId, timestamp) {
+  if (!timestamp) return;
+  const prev = read(seenKey(userId, conversationId));
+  if (prev && prev >= timestamp) return;
+  write(seenKey(userId, conversationId), timestamp);
+}
+
+export function removeCachedUser(meId, userId) {
+  const cached = getCachedUserList(meId);
+  if (!cached) return false;
+  const next = cached.users.filter((u) => u.$id !== userId);
+  if (next.length === cached.users.length) return false;
+  cached.users = next;
+  write(usersKey(meId), cached);
+  return true;
 }

@@ -4,16 +4,21 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sign in · Neer</title>
-  <link rel="icon" href="data:," />
+  <meta name="theme-color" content="#0e1116" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
   <link rel="stylesheet" href="css/style.css" />
   <script type="module">
     import { applyTheme } from "./js/theme.js";
+    import "./js/pwa.js";
     applyTheme();
   </script>
 </head>
 <body>
   <main class="auth">
     <h1>Neer</h1>
+    <p class="auth-tagline">1-on-1 chat, beautifully simple.</p>
 
     <div class="tabs">
       <button data-tab="login" class="tab active">Log in</button>
