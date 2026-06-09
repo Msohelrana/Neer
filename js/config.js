@@ -14,6 +14,11 @@ export const COL_RECEIPTS = "receipts";
 export const COL_PUSH_SUBS = "pushSubscriptions";
 export const COL_SIGNALING = "signaling";
 
+// Voice-call: auto-decline / give-up timeout in milliseconds. Change this to
+// adjust how long a call rings before it cancels itself if nobody picks up.
+// (90 000 ms = 1.5 minutes)
+export const RING_TIMEOUT_MS = 90 * 1000;
+
 // Web Push public key (VAPID). Generate the keypair with
 //   npx web-push generate-vapid-keys
 // then paste the public key here and the private key into the send-push

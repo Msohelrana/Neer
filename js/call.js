@@ -31,10 +31,29 @@ export class Call {
       sendSignal(this.callId, this.me.$id, this.other.$id, "ice", e.candidate.toJSON()).catch(() => {});
     };
     this.pc.ontrack = (e) => {
+      const stream = e.streams[0];
+      // Hidden audio element forces the browser to play the inbound stream
+      // (Chrome quirk — pure WebAudio MediaStreamSource alone sometimes won't
+      // emit sound). We mute it and route the audio through a GainNode so the
+      // "Loudspeaker" toggle can amplify it.
       this.remoteAudio = document.createElement("audio");
       this.remoteAudio.autoplay = true;
-      this.remoteAudio.srcObject = e.streams[0];
+      this.remoteAudio.srcObject = stream;
+      this.remoteAudio.muted = true;
       document.body.appendChild(this.remoteAudio);
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        this.audioCtx = new Ctx();
+        if (this.audioCtx.state === "suspended") this.audioCtx.resume().catch(() => {});
+        const src = this.audioCtx.createMediaStreamSource(stream);
+        this.gainNode = this.audioCtx.createGain();
+        this.gainNode.gain.value = 1.0;
+        src.connect(this.gainNode).connect(this.audioCtx.destination);
+      } catch (err) {
+        // WebAudio failed — fall back to plain audio element output.
+        console.warn("WebAudio gain unavailable:", err?.message);
+        this.remoteAudio.muted = false;
+      }
     };
     this.pc.onconnectionstatechange = () => {
       const s = this.pc.connectionState;
@@ -69,8 +88,10 @@ export class Call {
   }
 
   async acceptIncoming(offer) {
-    this._emit("connecting");
     await this._getMic();
+    // Receiver picked up — fire "accepted" so the UI can start the timer
+    // immediately (instead of waiting for the WebRTC handshake to finish).
+    this._emit("accepted");
     await this.pc.setRemoteDescription(offer);
     const answer = await this.pc.createAnswer();
     await this.pc.setLocalDescription(answer);
@@ -83,6 +104,8 @@ export class Call {
     if (sig.type === "answer") {
       await this.pc.setRemoteDescription(payload);
       await this._flushIce();
+      // Caller knows the receiver picked up the moment the answer arrives.
+      this._emit("accepted");
     } else if (sig.type === "ice") {
       if (this.pc.remoteDescription) {
         try { await this.pc.addIceCandidate(payload); } catch (e) { console.warn("ICE:", e); }
@@ -105,6 +128,11 @@ export class Call {
     this.localStream?.getAudioTracks().forEach((t) => (t.enabled = !mute));
   }
 
+  setLoudspeaker(on) {
+    if (this.gainNode) this.gainNode.gain.value = on ? 1.8 : 1.0;
+    else if (this.remoteAudio) this.remoteAudio.volume = 1.0; // already max
+  }
+
   hangup(remote = false) {
     if (this.ended) return;
     this.ended = true;
@@ -113,6 +141,12 @@ export class Call {
     if (this.remoteAudio) {
       try { this.remoteAudio.srcObject = null; } catch {}
       this.remoteAudio.remove();
+      this.remoteAudio = null;
+    }
+    if (this.audioCtx) {
+      try { this.audioCtx.close(); } catch {}
+      this.audioCtx = null;
+      this.gainNode = null;
     }
     if (!remote) {
       sendSignal(this.callId, this.me.$id, this.other.$id, "end", {}).catch(() => {});

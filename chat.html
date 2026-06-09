@@ -190,6 +190,7 @@
     import { Call } from "./js/call.js";
     import { subscribeSignals } from "./js/signaling.js";
     import { ID as AppwriteID } from "./js/appwrite.js";
+    import { RING_TIMEOUT_MS } from "./js/config.js";
     import {
       getCachedMessages,
       appendCachedMessage,
@@ -315,7 +316,42 @@
       return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
 
+    // Detect/parse call-event messages encoded as `__CALL__{json}` in `text`.
+    function parseCallEvent(text) {
+      if (!text || !text.startsWith("__CALL__")) return null;
+      try { return JSON.parse(text.slice(8)); } catch { return {}; }
+    }
+    function formatCallSummary(info, isMine) {
+      const status = info?.status || "ended";
+      const duration = info?.duration || 0;
+      if (status === "accepted" && duration > 0) {
+        const mm = Math.floor(duration / 60);
+        const ss = String(duration % 60).padStart(2, "0");
+        return { label: `Voice call · ${mm}:${ss}`, missed: false };
+      }
+      return { label: isMine ? "No answer" : "Missed voice call", missed: true };
+    }
+    function paintCallEvent(bubble, msg) {
+      const info = parseCallEvent(msg.text);
+      const { label, missed } = formatCallSummary(info, msg.senderId === me.$id);
+      bubble.innerHTML = "";
+      const icon = document.createElement("span");
+      icon.className = "call-event-icon" + (missed ? " missed" : "");
+      icon.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.5.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.4 21 3 13.6 3 4c0-.6.4-1 1-1h3.4c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.5.1.4 0 .8-.2 1l-2.2 2.3z" fill="currentColor"/></svg>`;
+      const text = document.createElement("span");
+      text.className = "call-event-text";
+      text.textContent = label;
+      const time = document.createElement("span");
+      time.className = "call-event-time";
+      time.textContent = formatTime(msg.$createdAt);
+      bubble.append(icon, text, time);
+    }
+
     function paintBubbleContent(bubble, msg) {
+      if (parseCallEvent(msg.text)) {
+        paintCallEvent(bubble, msg);
+        return;
+      }
       const edited = msg.$updatedAt && msg.$updatedAt !== msg.$createdAt;
       const isMine = msg.senderId === me.$id;
       bubble.innerHTML = "";
@@ -381,10 +417,13 @@
       messageMap.set(msg.$id, msg);
       messagesEl.querySelector(".empty-conv")?.remove();
       const wrap = document.createElement("div");
-      wrap.className = "bubble " + (msg.senderId === me.$id ? "me" : "them");
+      const isCall = !!parseCallEvent(msg.text);
+      wrap.className = isCall
+        ? "bubble system call-event"
+        : "bubble " + (msg.senderId === me.$id ? "me" : "them");
       wrap.dataset.id = msg.$id;
       paintBubbleContent(wrap, msg);
-      bindBubbleLongPress(wrap, msg.$id);
+      if (!isCall) bindBubbleLongPress(wrap, msg.$id);
       messagesEl.appendChild(wrap);
       bubbleMap.set(msg.$id, wrap);
       paintReactions(msg.$id);
@@ -512,6 +551,7 @@
       const lastMine = meBubbles[meBubbles.length - 1];
       const msg = messageMap.get(lastMine.dataset.id);
       if (!msg) return;
+      if (parseCallEvent(msg.text)) return;  // skip indicator for call event records
 
       const otherSeenAt = receiptsMap.get(activeOther.$id);
       let status, isSeen = false;
@@ -1034,8 +1074,17 @@
           const msgs = getCachedMessages(me.$id, conv.$id);
           const last = msgs[msgs.length - 1];
           if (last) {
-            const prefix = last.senderId === me.$id ? "You: " : "";
-            item.querySelector(".last-message").textContent = prefix + last.text;
+            const callInfo = parseCallEvent(last.text);
+            let display, prefix;
+            if (callInfo) {
+              const { label, missed } = formatCallSummary(callInfo, last.senderId === me.$id);
+              display = "📞 " + label;
+              prefix = "";
+            } else {
+              prefix = last.senderId === me.$id ? "You: " : "";
+              display = last.text;
+            }
+            item.querySelector(".last-message").textContent = prefix + display;
             const lastSeen = getLastSeen(me.$id, conv.$id);
             const isUnread = last.senderId !== me.$id && last.$createdAt > lastSeen;
             if (isUnread) item.classList.add("unread");
@@ -1140,8 +1189,8 @@
             (activeConversation && msg.conversationId === activeConversation.$id)) {
           markSeen(me.$id, msg.conversationId, msg.$createdAt);
         }
-        // Notify on incoming messages from others.
-        if (msg.senderId !== me.$id) {
+        // Notify on incoming messages from others (skip call-event records).
+        if (msg.senderId !== me.$id && !parseCallEvent(msg.text)) {
           const sender = (getCachedUserList(me.$id)?.users || []).find((u) => u.$id === msg.senderId);
           showMessageNotification(sender?.name || "New message", msg.text, msg.conversationId, msg.senderId);
         }
@@ -1332,6 +1381,51 @@
     }
 
     // ----- Voice call (WebRTC + Appwrite signaling) -----
+    // Two separate ring tones: caller hears one while waiting, receiver hears
+    // a louder one while the Accept/Decline dialog is up.
+    const OUTGOING_RING_SRC = "./audio/call ring.mp3";
+    const INCOMING_RING_SRC = "./audio/receiver ring.mp3";
+    let _outAudio = null;
+    let _inAudio  = null;
+    function _outRing() {
+      if (!_outAudio) {
+        _outAudio = new Audio(OUTGOING_RING_SRC);
+        _outAudio.loop = true;
+        _outAudio.preload = "auto";
+      }
+      return _outAudio;
+    }
+    function _inRing() {
+      if (!_inAudio) {
+        _inAudio = new Audio(INCOMING_RING_SRC);
+        _inAudio.loop = true;
+        _inAudio.preload = "auto";
+      }
+      return _inAudio;
+    }
+    function playOutgoingRing() {
+      stopRing();
+      const a = _outRing();
+      a.volume = 0.5;
+      a.currentTime = 0;
+      a.play().catch((e) => console.warn("Outgoing ring play failed:", e?.message));
+    }
+    function playIncomingRing() {
+      stopRing();
+      const a = _inRing();
+      a.volume = 1.0;
+      a.currentTime = 0;
+      a.play().catch((e) => console.warn("Incoming ring play failed:", e?.message));
+      if (navigator.vibrate) navigator.vibrate([2000, 1000, 2000, 1000, 2000]);
+    }
+    function stopRing() {
+      [_outAudio, _inAudio].forEach((a) => {
+        if (!a) return;
+        try { a.pause(); a.currentTime = 0; } catch {}
+      });
+      if (navigator.vibrate) navigator.vibrate(0);
+    }
+
     const callOverlay  = document.getElementById("call-overlay");
     const callAvatarEl = document.getElementById("call-avatar");
     const callNameEl   = document.getElementById("call-name");
@@ -1340,11 +1434,13 @@
     let activeCall = null;
     let callTimer  = null;
     let muted = false;
+    let pendingIncoming = null; // { callId, cancel } while the receiver hasn't answered yet
 
     const CALL_ICON_END   = `<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .4-.23.74-.56.9-.98.48-1.87 1.1-2.66 1.85a.998.998 0 0 1-1.41 0L.29 13.08a.95.95 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48a.998.998 0 0 1-1.41 0c-.79-.74-1.69-1.36-2.67-1.85a1.01 1.01 0 0 1-.56-.9v-3.1A16.84 16.84 0 0 0 12 9z" fill="currentColor" transform="rotate(135 12 12)"/></svg>`;
     const CALL_ICON_ACCEPT= `<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.5.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.4 21 3 13.6 3 4c0-.6.4-1 1-1h3.4c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.5.1.4 0 .8-.2 1l-2.2 2.3z" fill="currentColor"/></svg>`;
     const CALL_ICON_MIC   = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z" fill="currentColor"/></svg>`;
     const CALL_ICON_MUTE  = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23A6.94 6.94 0 0 0 19 11zm-4.02.17L15 11V5a3 3 0 0 0-6 0v.18l5.98 5.99zM4.27 3 3 4.27l6.01 6.01V11a3 3 0 0 0 3 3l1.66.83 4.07 4.07L19 17.73 4.27 3z" fill="currentColor"/></svg>`;
+    const CALL_ICON_SPEAKER = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" fill="currentColor"/></svg>`;
 
     function callBtn(label, html, cls, onClick) {
       const b = document.createElement("button");
@@ -1358,6 +1454,7 @@
 
     function showCallUI(other, status, controls) {
       paintAvatar(callAvatarEl, other.$id, other.name || other.email);
+      callAvatarEl.classList.remove("ringing");
       callNameEl.textContent = other.name;
       callStatusEl.textContent = status;
       callCtrlsEl.innerHTML = "";
@@ -1367,6 +1464,7 @@
 
     function hideCallUI() {
       callOverlay.classList.add("hidden");
+      callAvatarEl.classList.remove("ringing");
       if (callTimer) { clearInterval(callTimer); callTimer = null; }
     }
 
@@ -1389,15 +1487,19 @@
       hideCallUI();
     }
 
-    function wireCall(call, other) {
+    function wireCall(call, other, conv) {
       call.on("ringing", () => {
         showCallUI(other, "Calling…", [
           callBtn("End call", CALL_ICON_END, "end danger", endActiveCall),
         ]);
+        playOutgoingRing();
       });
-      call.on("connecting", () => callStatusEl.textContent = "Connecting…");
-      call.on("connected", () => {
+      // The moment either side picks up — stop ringing, flip to call screen,
+      // start the timer. Both peers reach this within ~200 ms of each other.
+      call.on("accepted", () => {
+        stopRing();
         muted = false;
+        let loud = false;
         startCallTimer();
         callStatusEl.textContent = "00:00";
         callCtrlsEl.innerHTML = "";
@@ -1407,35 +1509,60 @@
           muteBtn.innerHTML = muted ? CALL_ICON_MUTE : CALL_ICON_MIC;
           muteBtn.classList.toggle("active", muted);
         });
+        const spkBtn = callBtn("Loudspeaker", CALL_ICON_SPEAKER, "speaker", () => {
+          loud = !loud;
+          call.setLoudspeaker(loud);
+          spkBtn.classList.toggle("active", loud);
+        });
         callCtrlsEl.append(
           muteBtn,
+          spkBtn,
           callBtn("End call", CALL_ICON_END, "end danger", endActiveCall),
         );
       });
       call.on("ended", () => {
+        stopRing();
         if (activeCall === call) {
           activeCall = null;
           hideCallUI();
           showToast(`Call with ${other.name} ended`);
+        }
+        // Caller logs a single call-history record; both sides see it via realtime.
+        if (call.kind === "out" && conv) {
+          const duration = call.startedAt ? Math.floor((Date.now() - call.startedAt) / 1000) : 0;
+          const status = duration > 0 ? "accepted" : "missed";
+          sendMessage(conv, me.$id, "__CALL__" + JSON.stringify({ status, duration })).catch(() => {});
         }
       });
     }
 
     async function startOutgoingCall(other) {
       if (activeCall) { showToast("Already on a call"); return; }
+      const conv = activeConversation;
+      if (!conv) return;
       const callId = AppwriteID.unique();
       const call = new Call(me, other, callId, "out");
       activeCall = call;
-      wireCall(call, other);
+      wireCall(call, other, conv);
+      // Auto-cancel if the other side never picks up within the timeout.
+      const ringTimer = setTimeout(() => {
+        if (activeCall === call && !call.startedAt) {
+          showToast(`${other.name} didn't answer`);
+          endActiveCall();
+        }
+      }, RING_TIMEOUT_MS);
+      call.on("accepted", () => clearTimeout(ringTimer));
+      call.on("ended",    () => clearTimeout(ringTimer));
       try {
         await call.startOutgoing();
       } catch (err) {
+        clearTimeout(ringTimer);
         endActiveCall();
         dialogAlert("Couldn't start call: " + (err?.message || err));
       }
     }
 
-    async function handleIncomingCall(sig, other) {
+    function handleIncomingCall(sig, other) {
       if (activeCall) {
         // Already busy — auto-decline by sending end.
         const tmp = new Call(me, other, sig.callId, "in");
@@ -1444,23 +1571,45 @@
       }
       const callId = sig.callId;
       const offer = sig._payload;
-      const ok = await dialogConfirm(`Incoming voice call from ${other.name}`, {
-        okLabel: "Accept", cancelLabel: "Decline",
-      });
-      if (!ok) {
+      playIncomingRing();
+
+      // Auto-decline if the user doesn't pick up within the timeout.
+      const ringTimer = setTimeout(() => {
+        cancelPendingIncoming();
         const tmp = new Call(me, other, callId, "in");
         tmp.hangup();
-        return;
+        showToast(`Missed call from ${other.name}`);
+      }, RING_TIMEOUT_MS);
+
+      function cancelPendingIncoming() {
+        clearTimeout(ringTimer);
+        stopRing();
+        hideCallUI();
+        pendingIncoming = null;
       }
-      const call = new Call(me, other, callId, "in");
-      activeCall = call;
-      wireCall(call, other);
-      try {
-        await call.acceptIncoming(offer);
-      } catch (err) {
-        endActiveCall();
-        dialogAlert("Couldn't accept call: " + (err?.message || err));
-      }
+      pendingIncoming = { callId, cancel: cancelPendingIncoming };
+
+      // Reuse the full-screen call overlay for the incoming ring screen, with
+      // real Accept (green phone) + Decline (red rotated phone) icon buttons.
+      const decline = callBtn("Decline", CALL_ICON_END, "end danger", () => {
+        cancelPendingIncoming();
+        const tmp = new Call(me, other, callId, "in");
+        tmp.hangup();
+      });
+      const accept = callBtn("Accept", CALL_ICON_ACCEPT, "accept success", async () => {
+        cancelPendingIncoming();
+        const call = new Call(me, other, callId, "in");
+        activeCall = call;
+        wireCall(call, other);
+        try {
+          await call.acceptIncoming(offer);
+        } catch (err) {
+          endActiveCall();
+          dialogAlert("Couldn't accept call: " + (err?.message || err));
+        }
+      });
+      showCallUI(other, "Incoming voice call…", [decline, accept]);
+      callAvatarEl.classList.add("ringing");
     }
 
     // Listen for signaling docs addressed to me.
@@ -1469,6 +1618,10 @@
         const users = getCachedUserList(me.$id)?.users || [];
         const other = users.find((u) => u.$id === sig.from);
         if (other) handleIncomingCall(sig, other);
+      } else if (sig.type === "end" && pendingIncoming && pendingIncoming.callId === sig.callId) {
+        // Caller hung up before we picked up — kill the ringtone + dialog.
+        pendingIncoming.cancel();
+        showToast("Caller cancelled");
       } else if (activeCall && activeCall.callId === sig.callId) {
         await activeCall.handleSignal(sig);
       }

@@ -5,6 +5,7 @@ import {
   COL_MESSAGES,
   COL_REACTIONS,
   COL_RECEIPTS,
+  COL_SIGNALING,
 } from "./config.js";
 
 /**
@@ -16,7 +17,7 @@ import {
  * connection was established" console warnings).
  */
 
-const TRACKED = [COL_USERS, COL_MESSAGES, COL_REACTIONS, COL_RECEIPTS];
+const TRACKED = [COL_USERS, COL_MESSAGES, COL_REACTIONS, COL_RECEIPTS, COL_SIGNALING];
 const channelFor = (col) => `databases.${DB_ID}.collections.${col}.documents`;
 const handlers = new Map(TRACKED.map((c) => [c, new Set()]));
 

@@ -1069,6 +1069,37 @@ a:hover { text-decoration: underline; }
    the next bubble in the thread. */
 .bubble:has(.bubble-reactions) { margin-bottom: 12px; }
 
+/* Call-history record rendered as a centered system pill */
+.bubble.system.call-event {
+  align-self: center;
+  margin-left: 0;
+  max-width: 90%;
+  padding: 6px 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: none;
+  animation: none;
+}
+.bubble.system.call-event::before,
+.bubble.system.call-event::after { content: none; }
+.bubble.system.call-event .bubble-avatar { display: none; }
+.call-event-icon {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  width: 18px;
+  height: 18px;
+}
+.call-event-icon.missed { color: var(--danger); }
+.call-event-text { font-weight: 500; color: var(--text); }
+.call-event-time { font-size: 0.7rem; opacity: 0.7; font-variant-numeric: tabular-nums; }
+
 /* Read-receipt indicator — sits below the last "me" bubble */
 .receipt-indicator {
   align-self: flex-end;
@@ -1107,7 +1138,7 @@ a:hover { text-decoration: underline; }
   inset: 0;
   z-index: 600;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
   background:
     radial-gradient(80vmax 60vmax at 50% 0%, rgba(0, 121, 255, 0.25), transparent 60%),
@@ -1119,9 +1150,10 @@ a:hover { text-decoration: underline; }
   flex-direction: column;
   align-items: center;
   gap: 18px;
-  padding: 48px 20px;
+  padding: clamp(48px, 12vh, 96px) 20px max(36px, env(safe-area-inset-bottom));
   width: 100%;
   max-width: 420px;
+  height: 100%;
 }
 .call-screen .avatar {
   width: 132px;
@@ -1145,12 +1177,25 @@ a:hover { text-decoration: underline; }
 }
 .call-controls {
   display: flex;
-  gap: 28px;
-  margin-top: 28px;
+  gap: clamp(28px, 9vw, 56px);
+  margin-top: auto;        /* pin to the bottom of the call screen */
+  padding-top: 32px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+/* Lift the bottom row off the very bottom edge while ringing — applies to
+   both the incoming "Accept/Decline" screen and the outgoing "Calling…"
+   screen (anything that's not the active-call Mute/Speaker/End layout). */
+.call-controls:not(:has(.call-btn-circle.mute)) {
+  margin-bottom: clamp(40px, 8vh, 80px);
+}
+/* Extra-wide gap between Accept and Decline on the incoming-call screen. */
+.call-controls:has(.call-btn-circle.accept) {
+  gap: clamp(80px, 26vw, 140px);
 }
 .call-btn-circle {
-  width: 64px;
-  height: 64px;
+  width: 68px;
+  height: 68px;
   border-radius: 50%;
   border: none;
   background: var(--panel-2);
@@ -1164,8 +1209,29 @@ a:hover { text-decoration: underline; }
 .call-btn-circle:active { transform: scale(0.94); }
 .call-btn-circle.danger { background: var(--danger); color: #fff; }
 .call-btn-circle.danger:hover { filter: brightness(1.1); background: var(--danger); }
-.call-btn-circle.mute.active { background: var(--accent); color: #fff; }
+.call-btn-circle.success { background: #00C853; color: #fff; }
+.call-btn-circle.success:hover { filter: brightness(1.08); background: #00C853; }
+.call-btn-circle.mute.active    { background: var(--accent); color: #fff; }
+.call-btn-circle.speaker.active { background: var(--accent); color: #fff; }
 .call-btn-circle svg { display: block; }
+
+/* Incoming-call accept button gently pulses to draw the eye. */
+.call-btn-circle.accept {
+  animation: call-pulse 1.4s ease-in-out infinite;
+}
+@keyframes call-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 200, 83, 0.6); transform: scale(1); }
+  50%      { box-shadow: 0 0 0 14px rgba(0, 200, 83, 0); transform: scale(1.06); }
+}
+
+/* Caller's avatar pulses softly during the incoming-ring state. */
+.call-screen .avatar.ringing {
+  animation: avatar-ringing 1.6s ease-in-out infinite;
+}
+@keyframes avatar-ringing {
+  0%, 100% { box-shadow: 0 12px 40px hsl(var(--hue) 65% 35% / 0.6), 0 0 0 0 rgba(0, 121, 255, 0.45); }
+  50%      { box-shadow: 0 12px 40px hsl(var(--hue) 65% 35% / 0.6), 0 0 0 26px rgba(0, 121, 255, 0); }
+}
 
 /* Themed dialog (replaces window.alert / window.confirm) */
 .app-dialog {
