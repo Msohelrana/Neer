@@ -14,10 +14,25 @@ export const COL_RECEIPTS = "receipts";
 export const COL_PUSH_SUBS = "pushSubscriptions";
 export const COL_SIGNALING = "signaling";
 
+// Storage bucket for message-attached images. Create this in the Appwrite
+// console: Storage → New bucket. Permissions: Create=Users, Read=Users.
+// Allowed file extensions: jpg, jpeg, png, webp, gif. Max size 5 MB.
+export const BUCKET_IMAGES = "6a28ea06002d4e9fe15e";
+
+// Client-side compression target. Photos larger than these get downscaled and
+// re-encoded as JPEG before upload — saves bandwidth + bucket quota.
+export const IMAGE_MAX_DIM = 1280;
+export const IMAGE_JPEG_QUALITY = 0.78;
+
 // Voice-call: auto-decline / give-up timeout in milliseconds. Change this to
 // adjust how long a call rings before it cancels itself if nobody picks up.
 // (90 000 ms = 1.5 minutes)
 export const RING_TIMEOUT_MS = 90 * 1000;
+
+// Composer compact → expanded auto-revert. After focusing the input, if the
+// user doesn't type within this many ms, the four left-side action buttons
+// (+, camera, gallery, mic) come back. Set to 0 to disable.
+export const COMPOSER_AUTO_EXPAND_MS = 5 * 1000;
 
 // Web Push public key (VAPID). Generate the keypair with
 //   npx web-push generate-vapid-keys

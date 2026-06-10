@@ -1556,3 +1556,117 @@ a:hover { text-decoration: underline; }
             user-select: text;
   }
 }
+
+/* ----- Offline banner + pending message state ----- */
+.offline-banner {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--danger);
+  background: var(--bg);
+  padding: 6px 12px;
+}
+.offline-banner.hidden { display: none; }
+
+.time-divider {
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  font-weight: 400;
+  opacity: 0.55;
+  margin: 18px 0 8px;
+  user-select: none;
+}
+
+/* Left-side composer actions are blue icons on transparent — no filled pill. */
+.composer-expanded-action { color: var(--accent); }
+.composer-row { gap: 2px; }
+
+.bubble.pending { opacity: 0.78; }
+
+/* Image bubbles: flush rounded image, no bubble background/padding when
+   the message is image-only. Text caption sits below the image when present.
+   Width is fixed-ish so portraits render tall and landscapes render wide,
+   matching Messenger's natural-aspect preview. */
+.bubble .bubble-image {
+  display: block;
+  width: 280px;
+  max-width: 72vw;
+  height: auto;
+  border-radius: 18px;
+  cursor: pointer;
+  -webkit-user-select: none;
+          user-select: none;
+}
+.bubble.has-image {
+  background: transparent !important;
+  padding: 0;
+  border: none;
+  max-width: 280px;
+}
+.bubble.has-image .bubble-text {
+  display: block;
+  margin-top: 6px;
+  padding: 8px 12px;
+  background: var(--panel-3, var(--panel-2));
+  border-radius: 14px;
+}
+.bubble.me.has-image .bubble-text {
+  background: var(--bubble-me-grad, var(--accent));
+  color: #fff;
+}
+
+/* Full-screen image viewer (lightbox) */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.96);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lightbox.hidden { display: none; }
+.lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: default;
+}
+.lightbox-btn {
+  position: absolute;
+  top: max(16px, env(safe-area-inset-top, 16px));
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.08s ease;
+}
+.lightbox-btn:hover  { background: rgba(255, 255, 255, 0.22); }
+.lightbox-btn:active { transform: scale(0.92); }
+.lightbox-close { right: 16px; }
+.lightbox-save  { right: 70px; }
+.bubble.pending .time {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.bubble.pending .time::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  display: inline-block;
+  animation: neer-spin 0.8s linear infinite;
+}
+@keyframes neer-spin { to { transform: rotate(360deg); } }
+

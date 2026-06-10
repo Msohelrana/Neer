@@ -32,28 +32,15 @@ export class Call {
     };
     this.pc.ontrack = (e) => {
       const stream = e.streams[0];
-      // Hidden audio element forces the browser to play the inbound stream
-      // (Chrome quirk — pure WebAudio MediaStreamSource alone sometimes won't
-      // emit sound). We mute it and route the audio through a GainNode so the
-      // "Loudspeaker" toggle can amplify it.
+      this.remoteStream = stream;
       this.remoteAudio = document.createElement("audio");
       this.remoteAudio.autoplay = true;
       this.remoteAudio.srcObject = stream;
-      this.remoteAudio.muted = true;
+      this.remoteAudio.muted = false;
       document.body.appendChild(this.remoteAudio);
-      try {
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        this.audioCtx = new Ctx();
-        if (this.audioCtx.state === "suspended") this.audioCtx.resume().catch(() => {});
-        const src = this.audioCtx.createMediaStreamSource(stream);
-        this.gainNode = this.audioCtx.createGain();
-        this.gainNode.gain.value = 1.0;
-        src.connect(this.gainNode).connect(this.audioCtx.destination);
-      } catch (err) {
-        // WebAudio failed — fall back to plain audio element output.
-        console.warn("WebAudio gain unavailable:", err?.message);
-        this.remoteAudio.muted = false;
-      }
+      // Start in earpiece mode (small call speaker). Loudspeaker toggle
+      // flips to the media-speaker path via Web Audio + gain boost.
+      this._applyLoudspeaker(false).catch(() => {});
     };
     this.pc.onconnectionstatechange = () => {
       const s = this.pc.connectionState;
@@ -129,8 +116,39 @@ export class Call {
   }
 
   setLoudspeaker(on) {
-    if (this.gainNode) this.gainNode.gain.value = on ? 1.8 : 1.0;
-    else if (this.remoteAudio) this.remoteAudio.volume = 1.0; // already max
+    this._applyLoudspeaker(on).catch((e) => console.warn("Loudspeaker switch:", e?.message));
+  }
+
+  async _applyLoudspeaker(on) {
+    if (!this.remoteAudio || !this.remoteStream) return;
+    this.loudspeaker = !!on;
+    // Tear down any prior Web Audio chain so we can rebuild fresh.
+    if (this.audioCtx) {
+      try { await this.audioCtx.close(); } catch {}
+      this.audioCtx = null;
+      this.gainNode = null;
+    }
+    if (on) {
+      // Loudspeaker: media speaker via Web Audio (gain ~1.8×). Force default sink.
+      try { if (this.remoteAudio.setSinkId) await this.remoteAudio.setSinkId(""); } catch {}
+      this.remoteAudio.muted = true;
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        this.audioCtx = new Ctx();
+        if (this.audioCtx.state === "suspended") await this.audioCtx.resume().catch(() => {});
+        const src = this.audioCtx.createMediaStreamSource(this.remoteStream);
+        this.gainNode = this.audioCtx.createGain();
+        this.gainNode.gain.value = 1.8;
+        src.connect(this.gainNode).connect(this.audioCtx.destination);
+      } catch (err) {
+        console.warn("WebAudio gain unavailable:", err?.message);
+        this.remoteAudio.muted = false;
+      }
+    } else {
+      // Earpiece: plain <audio> element + 'communications' sink hint (Chromium).
+      this.remoteAudio.muted = false;
+      try { if (this.remoteAudio.setSinkId) await this.remoteAudio.setSinkId("communications"); } catch {}
+    }
   }
 
   hangup(remote = false) {

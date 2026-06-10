@@ -26,6 +26,7 @@
         <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Settings">⚙</button>
       </div>
       <div class="brand">Neer</div>
+      <div class="offline-banner hidden" data-offline-banner>No Internet Connection</div>
       <div class="user-list" id="user-list">
         <div class="empty">Loading users…</div>
       </div>
@@ -52,6 +53,7 @@
           </button>
         </div>
       </div>
+      <div class="offline-banner hidden" data-offline-banner>No Internet Connection</div>
       <div class="messages" id="messages">
         <div class="placeholder">No conversation selected.</div>
       </div>
@@ -65,7 +67,19 @@
         </div>
         <div class="emoji-picker hidden" id="emoji-picker" role="dialog" aria-label="Emoji picker"></div>
         <div class="composer-row">
-          <button type="button" id="more-btn" class="composer-circle-btn more-btn" aria-label="More options" title="More options">
+          <button type="button" id="plus-btn" class="composer-circle-btn composer-expanded-action" aria-label="More" title="More">
+            <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z" fill="currentColor"/></svg>
+          </button>
+          <button type="button" id="camera-btn" class="composer-circle-btn composer-expanded-action" aria-label="Camera" title="Camera">
+            <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M9 2 7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z" fill="currentColor"/></svg>
+          </button>
+          <button type="button" id="gallery-btn" class="composer-circle-btn composer-expanded-action" aria-label="Gallery" title="Gallery">
+            <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" fill="currentColor"/></svg>
+          </button>
+          <button type="button" id="mic-btn" class="composer-circle-btn composer-expanded-action" aria-label="Voice message" title="Voice message">
+            <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z" fill="currentColor"/></svg>
+          </button>
+          <button type="button" id="more-btn" class="composer-circle-btn more-btn hidden" aria-label="Show more options" title="Show more options">
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
           <div class="composer-pill">
@@ -140,6 +154,16 @@
 
   <div class="reaction-popover hidden" id="reaction-popover" role="menu" aria-label="Quick reactions"></div>
 
+  <div class="lightbox hidden" id="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer">
+    <button type="button" class="lightbox-btn lightbox-close" id="lightbox-close" aria-label="Close">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M18.3 5.71 12 12.01l-6.3-6.3-1.41 1.41 6.3 6.3-6.3 6.3 1.41 1.41 6.3-6.3 6.3 6.3 1.41-1.41-6.3-6.3 6.3-6.3z" fill="currentColor"/></svg>
+    </button>
+    <button type="button" class="lightbox-btn lightbox-save" id="lightbox-save" aria-label="Save image">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor"/></svg>
+    </button>
+    <img id="lightbox-img" alt="Photo" />
+  </div>
+
   <div class="call-overlay hidden" id="call-overlay" role="dialog" aria-modal="true" aria-label="Voice call">
     <div class="call-screen">
       <div class="call-avatar avatar" id="call-avatar" aria-hidden="true"></div>
@@ -190,7 +214,7 @@
     import { Call } from "./js/call.js";
     import { subscribeSignals } from "./js/signaling.js";
     import { ID as AppwriteID } from "./js/appwrite.js";
-    import { RING_TIMEOUT_MS } from "./js/config.js";
+    import { RING_TIMEOUT_MS, COMPOSER_AUTO_EXPAND_MS } from "./js/config.js";
     import {
       getCachedMessages,
       appendCachedMessage,
@@ -212,9 +236,33 @@
       saveMyReceiptId,
     } from "./js/cache.js";
     import { getTheme, setTheme } from "./js/theme.js";
+    import {
+      getOutbox,
+      enqueueOutbox,
+      removeFromOutbox,
+      outboxForConversation,
+    } from "./js/outbox.js";
+    import {
+      uploadMessageImage,
+      imagePreviewUrl,
+      imageViewUrl,
+    } from "./js/photos.js";
 
     const me = await requireAuth();
     await ensureProfile(me);
+
+    // ----- Offline state -----
+    let online = navigator.onLine !== false;
+    const offlineBanners = document.querySelectorAll("[data-offline-banner]");
+    function isOffline() { return !online; }
+    function setOnlineUI(isOn) {
+      online = isOn;
+      offlineBanners.forEach((el) => el.classList.toggle("hidden", isOn));
+      if (isOn) flushOutbox().catch((e) => console.warn("Outbox flush:", e?.message));
+    }
+    window.addEventListener("online",  () => setOnlineUI(true));
+    window.addEventListener("offline", () => setOnlineUI(false));
+    setOnlineUI(online);
 
     // Match the chat container to the *visible* viewport (excludes the
     // mobile soft keyboard). Keeps the thread header pinned at the top and
@@ -278,6 +326,12 @@
     // doesn't quit while a chat is open. Settings modal takes priority — back
     // closes it first, then (next back) leaves the active conversation.
     window.addEventListener("popstate", () => {
+      const lb = document.getElementById("lightbox");
+      if (lb && !lb.classList.contains("hidden")) {
+        lb.classList.add("hidden");
+        document.getElementById("lightbox-img").src = "";
+        return;
+      }
       const sm = document.getElementById("settings-modal");
       if (sm && !sm.classList.contains("hidden")) {
         sm.classList.add("hidden");
@@ -387,15 +441,42 @@
         bubble.appendChild(quote);
       }
 
-      const textSpan = document.createElement("span");
-      textSpan.className = "bubble-text";
-      textSpan.textContent = msg.text;
-      bubble.appendChild(textSpan);
+      const hasImage = !!(msg.imageId || msg._localImageUrl);
+      bubble.classList.toggle("has-image", hasImage);
+      if (hasImage) {
+        const img = document.createElement("img");
+        img.className = "bubble-image";
+        img.alt = "Photo";
+        img.loading = "lazy";
+        img.src = msg._localImageUrl || imagePreviewUrl(msg.imageId, 800);
+        if (msg.imageId) {
+          img.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openLightbox(msg.imageId);
+          });
+        }
+        bubble.appendChild(img);
+      }
 
-      const time = document.createElement("span");
-      time.className = "time";
-      time.textContent = formatTime(msg.$createdAt) + (edited ? " · edited" : "");
-      bubble.appendChild(time);
+      if (msg.text) {
+        const textSpan = document.createElement("span");
+        textSpan.className = "bubble-text";
+        textSpan.textContent = msg.text;
+        bubble.appendChild(textSpan);
+      }
+
+      bubble.classList.toggle("pending", !!msg._pending);
+      if (msg._pending) {
+        const time = document.createElement("span");
+        time.className = "time";
+        time.textContent = "Sending…";
+        bubble.appendChild(time);
+      } else if (edited) {
+        const time = document.createElement("span");
+        time.className = "time";
+        time.textContent = "edited";
+        bubble.appendChild(time);
+      }
 
       const menuBtn = document.createElement("button");
       menuBtn.className = "bubble-menu-btn";
@@ -410,12 +491,73 @@
       bubble.appendChild(menuBtn);
     }
 
+    const dividerMap = new Map(); // messageId -> divider element
+    const anchorIds = new Set(); // messageIds whose divider is permanently visible
+    let shownDividerId = null;   // currently tap-revealed (in addition to anchors)
+    let lastAnchorTime = null;
+    const ANCHOR_GAP_MS = 60 * 60 * 1000; // show a fresh timestamp every hour
+
+    function formatDivider(iso) {
+      const d = new Date(iso);
+      const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const startOfYesterday = new Date(startOfToday); startOfYesterday.setDate(startOfToday.getDate() - 1);
+      if (d >= startOfToday) return time;
+      if (d >= startOfYesterday) return "YESTERDAY AT " + time;
+      const weekStart = new Date(startOfToday); weekStart.setDate(startOfToday.getDate() - 6);
+      if (d >= weekStart) {
+        return d.toLocaleDateString([], { weekday: "short" }).toUpperCase() + " AT " + time;
+      }
+      return d.toLocaleDateString([], { day: "numeric", month: "short" }).toUpperCase() + " AT " + time;
+    }
+
+    // Every message owns a divider. A message becomes an "anchor" (its divider
+    // is permanently visible) if it's at least ANCHOR_GAP_MS after the previous
+    // anchor — first message is always an anchor. Non-anchor dividers stay
+    // hidden but can be tap-revealed; only one tap-revealed at a time. Anchors
+    // ignore taps.
+    function appendDivider(msg) {
+      const t = new Date(msg.$createdAt).getTime();
+      const isAnchor = !lastAnchorTime || (t - new Date(lastAnchorTime).getTime()) >= ANCHOR_GAP_MS;
+      const div = document.createElement("div");
+      div.className = "time-divider" + (isAnchor ? "" : " hidden");
+      div.textContent = formatDivider(msg.$createdAt);
+      div.dataset.id = msg.$id;
+      messagesEl.appendChild(div);
+      dividerMap.set(msg.$id, div);
+      if (isAnchor) {
+        anchorIds.add(msg.$id);
+        lastAnchorTime = msg.$createdAt;
+      }
+    }
+    function hideShownDivider() {
+      if (!shownDividerId) return;
+      if (anchorIds.has(shownDividerId)) { shownDividerId = null; return; }
+      const el = dividerMap.get(shownDividerId);
+      if (el) el.classList.add("hidden");
+      shownDividerId = null;
+    }
+    function showOnlyDivider(messageId) {
+      hideShownDivider();
+      const el = dividerMap.get(messageId);
+      if (!el) return;
+      el.classList.remove("hidden");
+      shownDividerId = messageId;
+    }
+    function toggleDivider(messageId) {
+      if (anchorIds.has(messageId)) return;  // anchors are permanent
+      if (shownDividerId === messageId) hideShownDivider();
+      else showOnlyDivider(messageId);
+    }
+
     function renderMessage(msg) {
       if (hiddenIds.has(msg.$id)) return;
       if (renderedIds.has(msg.$id)) return;
       renderedIds.add(msg.$id);
       messageMap.set(msg.$id, msg);
       messagesEl.querySelector(".empty-conv")?.remove();
+      appendDivider(msg);
       const wrap = document.createElement("div");
       const isCall = !!parseCallEvent(msg.text);
       wrap.className = isCall
@@ -462,6 +604,11 @@
       if (bubble) bubble.remove();
       bubbleMap.delete(messageId);
       renderedIds.delete(messageId);
+      const div = dividerMap.get(messageId);
+      if (div) div.remove();
+      dividerMap.delete(messageId);
+      anchorIds.delete(messageId);
+      if (shownDividerId === messageId) shownDividerId = null;
       if (!messagesEl.querySelector(".bubble")) showEmptyConvState();
     }
 
@@ -651,7 +798,11 @@
         bubble.addEventListener(t, cancel)
       );
       bubble.addEventListener("click", (e) => {
-        if (fired) { e.stopPropagation(); e.preventDefault(); fired = false; }
+        if (fired) { e.stopPropagation(); e.preventDefault(); fired = false; return; }
+        // Short tap on the bubble body (not on an inner button/link/quote)
+        // toggles this message's timestamp divider.
+        if (e.target.closest("button, a, textarea, input, .bubble-quote, .bubble-reaction, .edit-input, .bubble-image")) return;
+        toggleDivider(messageId);
       }, true);
       bubble.addEventListener("contextmenu", (e) => {
         e.preventDefault();
@@ -672,6 +823,7 @@
     const ICON_EDIT   = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor"/></svg>`;
     const ICON_BACK   = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
     const ICON_HIDE   = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27z" fill="currentColor"/></svg>`;
+    const ICON_SAVE   = `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor"/></svg>`;
 
     function openReactionPopover(msg, bubble) {
       reactionPopover.innerHTML = "";
@@ -738,19 +890,33 @@
           closeMsgSheet();
           setReply(msg);
         }),
-        sheetBtn("Copy", ICON_COPY, async () => {
-          try {
-            await navigator.clipboard.writeText(msg.text);
-          } catch {
-            const ta = document.createElement("textarea");
-            ta.value = msg.text;
-            document.body.appendChild(ta);
-            ta.select();
-            try { document.execCommand("copy"); } catch {}
-            ta.remove();
-          }
-          closeMsgSheet();
-        }),
+      );
+      if (msg.imageId) {
+        msgSheetActions.appendChild(
+          sheetBtn("Save", ICON_SAVE, () => {
+            closeMsgSheet();
+            saveImage(msg.imageId);
+          })
+        );
+      }
+      if (msg.text) {
+        msgSheetActions.appendChild(
+          sheetBtn("Copy", ICON_COPY, async () => {
+            try {
+              await navigator.clipboard.writeText(msg.text);
+            } catch {
+              const ta = document.createElement("textarea");
+              ta.value = msg.text;
+              document.body.appendChild(ta);
+              ta.select();
+              try { document.execCommand("copy"); } catch {}
+              ta.remove();
+            }
+            closeMsgSheet();
+          })
+        );
+      }
+      msgSheetActions.appendChild(
         sheetBtn("Delete", ICON_DELETE, () => renderSheetDelete(msg, isMine), "danger"),
       );
       if (isMine) {
@@ -943,6 +1109,10 @@
       messageMap.clear();
       reactionsMap.clear();
       receiptsMap.clear();
+      dividerMap.clear();
+      anchorIds.clear();
+      shownDividerId = null;
+      lastAnchorTime = null;
       setReply(null);
       // Show the "Send a message to start chatting" placeholder right away;
       // it'll be removed the moment the first bubble lands.
@@ -965,7 +1135,18 @@
       if (unsubscribeReactions) { unsubscribeReactions(); unsubscribeReactions = null; }
       if (unsubscribeReceipts)  { unsubscribeReceipts();  unsubscribeReceipts  = null; }
 
-      activeConversation = await getOrCreateConversation(me.$id, other.$id);
+      try {
+        activeConversation = await getOrCreateConversation(me.$id, other.$id);
+      } catch (err) {
+        // Offline / network failure — fall back to a stub from cache or pairKey.
+        const pairKey = [me.$id, other.$id].sort().join("_");
+        const stub = getCachedConversation(me.$id, pairKey);
+        if (!stub) {
+          dialogAlert("Can't open this chat while offline — open it once while connected.");
+          return;
+        }
+        activeConversation = stub;
+      }
       const convId = activeConversation.$id;
 
       const cached = getCachedMessages(me.$id, convId);
@@ -974,10 +1155,30 @@
       let since = cached.length ? cached[cached.length - 1].$createdAt : null;
       const deletedAt = getDeletedAt(me.$id, convId);
       if (deletedAt && (!since || deletedAt > since)) since = deletedAt;
-      const fresh = await loadMessages(convId, since);
-      fresh.forEach((msg) => {
-        appendCachedMessage(me.$id, convId, msg);
-        renderMessage(msg);
+      try {
+        const fresh = await loadMessages(convId, since);
+        fresh.forEach((msg) => {
+          appendCachedMessage(me.$id, convId, msg);
+          renderMessage(msg);
+        });
+      } catch (err) {
+        // Offline — cached messages are already painted; skip the delta.
+        console.warn("loadMessages failed:", err?.message);
+      }
+
+      // Render any queued-but-unsent messages from the outbox.
+      outboxForConversation(me.$id, convId).forEach((item) => {
+        renderMessage({
+          $id: item.tempId,
+          conversationId: convId,
+          senderId: me.$id,
+          receiverId: item.receiverId,
+          text: item.text,
+          $createdAt: item.queuedAt,
+          $updatedAt: null,
+          _pending: true,
+          ...(item.reply ? { replyToId: item.reply.id, replyToText: (item.reply.text || "").slice(0, 280) } : {}),
+        });
       });
 
       // Mark this conversation as seen up to its latest message.
@@ -985,7 +1186,7 @@
       if (all.length) {
         markSeen(me.$id, convId, all[all.length - 1].$createdAt);
         repaintFromCache();
-      } else {
+      } else if (!outboxForConversation(me.$id, convId).length) {
         showEmptyConvState();
       }
 
@@ -1011,9 +1212,13 @@
       });
 
       // Load reactions for this conversation and subscribe to live updates.
-      const reactionDocs = await loadReactions(convId);
-      reactionDocs.forEach(ingestReaction);
-      reactionsMap.forEach((_, messageId) => paintReactions(messageId));
+      try {
+        const reactionDocs = await loadReactions(convId);
+        reactionDocs.forEach(ingestReaction);
+        reactionsMap.forEach((_, messageId) => paintReactions(messageId));
+      } catch (err) {
+        console.warn("loadReactions failed:", err?.message);
+      }
 
       unsubscribeReactions = subscribeReactions(convId, {
         onCreate: (r) => { ingestReaction(r);  paintReactions(r.messageId); },
@@ -1023,7 +1228,12 @@
 
       // Receipts — load both participants' read state, upsert mine to the
       // latest message, and stay subscribed for live Sent/Delivered/Seen flips.
-      const receiptDocs = await loadReceipts(convId);
+      let receiptDocs = null;
+      try {
+        receiptDocs = await loadReceipts(convId);
+      } catch (err) {
+        console.warn("loadReceipts failed:", err?.message);
+      }
       if (receiptDocs !== null) {
         receiptDocs.forEach((r) => receiptsMap.set(r.userId, r.lastSeenAt));
         const latest = getCachedMessages(me.$id, convId).slice(-1)[0];
@@ -1080,6 +1290,9 @@
               const { label, missed } = formatCallSummary(callInfo, last.senderId === me.$id);
               display = "📞 " + label;
               prefix = "";
+            } else if (last.imageId && !last.text) {
+              prefix = last.senderId === me.$id ? "You: " : "";
+              display = "📷 Photo";
             } else {
               prefix = last.senderId === me.$id ? "You: " : "";
               display = last.text;
@@ -1192,7 +1405,8 @@
         // Notify on incoming messages from others (skip call-event records).
         if (msg.senderId !== me.$id && !parseCallEvent(msg.text)) {
           const sender = (getCachedUserList(me.$id)?.users || []).find((u) => u.$id === msg.senderId);
-          showMessageNotification(sender?.name || "New message", msg.text, msg.conversationId, msg.senderId);
+          const previewText = msg.text || (msg.imageId ? "📷 Photo" : "");
+          showMessageNotification(sender?.name || "New message", previewText, msg.conversationId, msg.senderId);
         }
         repaintFromCache();
       },
@@ -1223,6 +1437,62 @@
       },
     });
 
+    function tempMsgId() {
+      return "tmp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+    }
+
+    // Render an optimistic "sending" bubble immediately, queue to outbox if
+    // offline, otherwise fire the network call and swap temp → real on success.
+    async function sendWithOptimism(text, reply) {
+      if (!activeConversation || !activeOther) return;
+      const tempId = tempMsgId();
+      const convId = activeConversation.$id;
+      const optimistic = {
+        $id: tempId,
+        conversationId: convId,
+        senderId: me.$id,
+        receiverId: activeOther.$id,
+        text,
+        $createdAt: new Date().toISOString(),
+        $updatedAt: null,
+        _pending: true,
+      };
+      if (reply?.id) {
+        optimistic.replyToId   = reply.id;
+        optimistic.replyToText = (reply.text || "").slice(0, 280);
+      }
+      renderMessage(optimistic);
+
+      const item = {
+        tempId,
+        conversationId: convId,
+        receiverId: activeOther.$id,
+        text,
+        reply: reply ? { id: reply.id, text: reply.text } : null,
+        queuedAt: optimistic.$createdAt,
+      };
+
+      if (isOffline()) {
+        enqueueOutbox(me.$id, item);
+        return;
+      }
+
+      try {
+        const sent = await sendMessage(activeConversation, me.$id, text, reply);
+        applyMessageDelete(tempId);
+        appendCachedMessage(me.$id, convId, sent);
+        renderMessage(sent);
+      } catch (err) {
+        // Network blip → keep the pending bubble and queue. Real errors → drop.
+        if (isOffline() || err?.message?.toLowerCase().includes("network")) {
+          enqueueOutbox(me.$id, item);
+        } else {
+          applyMessageDelete(tempId);
+          dialogAlert("Failed to send: " + err.message);
+        }
+      }
+    }
+
     composerEl.addEventListener("submit", async (e) => {
       e.preventDefault();
       const text = inputEl.value.trim();
@@ -1231,15 +1501,32 @@
       inputEl.value = "";
       setReply(null);
       refreshComposerMode();
-      try {
-        await sendMessage(activeConversation, me.$id, text, reply);
-      } catch (err) {
-        dialogAlert("Failed to send: " + err.message);
-        inputEl.value = text;
-        setReply(reply);
-        refreshComposerMode();
-      }
+      sendWithOptimism(text, reply);
     });
+
+    async function flushOutbox() {
+      const items = getOutbox(me.$id);
+      for (const item of items) {
+        const convStub = {
+          $id: item.conversationId,
+          participants: [me.$id, item.receiverId],
+        };
+        try {
+          const sent = await sendMessage(convStub, me.$id, item.text, item.reply);
+          removeFromOutbox(me.$id, item.tempId);
+          appendCachedMessage(me.$id, item.conversationId, sent);
+          if (activeConversation && activeConversation.$id === item.conversationId) {
+            applyMessageDelete(item.tempId);
+            renderMessage(sent);
+          }
+          repaintFromCache();
+        } catch (err) {
+          console.warn("Outbox send failed:", err?.message);
+          // Likely offline again — stop and retry on next reconnect.
+          if (!navigator.onLine) break;
+        }
+      }
+    }
 
     // Enter inserts a newline (default textarea behavior). Sending requires
     // tapping the send button — intentionally no Enter-to-send shortcut.
@@ -1269,20 +1556,17 @@
     inputEl.addEventListener("input", refreshComposerMode);
     refreshComposerMode();
 
-    likeBtn.addEventListener("click", async () => {
+    likeBtn.addEventListener("click", () => {
       if (!activeConversation) return;
       const reply = pendingReply;
       setReply(null);
-      try {
-        await sendMessage(activeConversation, me.$id, "👍", reply);
-      } catch (err) {
-        dialogAlert("Failed to send: " + err.message);
-        setReply(reply);
-      }
+      sendWithOptimism("👍", reply);
     });
 
     function setReply(msg) {
-      pendingReply = msg ? { id: msg.$id, text: msg.text } : null;
+      let snippet = msg?.text || "";
+      if (msg && !snippet && msg.imageId) snippet = "📷 Photo";
+      pendingReply = msg ? { id: msg.$id, text: snippet } : null;
       if (pendingReply) {
         const preview = pendingReply.text.length > 120
           ? pendingReply.text.slice(0, 120) + "…"
@@ -1627,10 +1911,161 @@
       }
     });
 
-    // ----- Composer "more" + thread-header action icons -----
-    document.getElementById("more-btn").addEventListener("click", () => {
-      showToast("Attachments coming soon");
+    // ----- Composer compact/expanded state -----
+    // Default: all 4 left-side buttons visible. Focusing the input collapses
+    // them into a single `>` arrow, Messenger-style. 20s of no typing while
+    // focused, or tapping the `>`, brings them back.
+    const expandedActions = document.querySelectorAll(".composer-expanded-action");
+    const moreBtnEl = document.getElementById("more-btn");
+    let composerCompact = false;
+    let composerExpandTimer = null;
+
+    function setComposerCompact(compact) {
+      composerCompact = compact;
+      expandedActions.forEach((b) => b.classList.toggle("hidden", compact));
+      moreBtnEl.classList.toggle("hidden", !compact);
+    }
+    function cancelComposerTimer() {
+      if (composerExpandTimer) {
+        clearTimeout(composerExpandTimer);
+        composerExpandTimer = null;
+      }
+    }
+    inputEl.addEventListener("focus", () => {
+      if (composerCompact) return;
+      setComposerCompact(true);
+      cancelComposerTimer();
+      if (COMPOSER_AUTO_EXPAND_MS > 0) {
+        composerExpandTimer = setTimeout(() => {
+          setComposerCompact(false);
+          composerExpandTimer = null;
+        }, COMPOSER_AUTO_EXPAND_MS);
+      }
     });
+    inputEl.addEventListener("input", cancelComposerTimer);
+    moreBtnEl.addEventListener("click", () => {
+      cancelComposerTimer();
+      setComposerCompact(false);
+    });
+    ["plus-btn", "mic-btn"].forEach((id) => {
+      document.getElementById(id).addEventListener("click", () => {
+        showToast("Coming soon");
+      });
+    });
+
+    // ----- Photo sending -----
+    const galleryInput = document.createElement("input");
+    galleryInput.type = "file";
+    galleryInput.accept = "image/*";
+    galleryInput.style.display = "none";
+    document.body.appendChild(galleryInput);
+
+    const cameraInput = document.createElement("input");
+    cameraInput.type = "file";
+    cameraInput.accept = "image/*";
+    cameraInput.capture = "environment";
+    cameraInput.style.display = "none";
+    document.body.appendChild(cameraInput);
+
+    document.getElementById("gallery-btn").addEventListener("click", () => {
+      if (!activeConversation) return;
+      if (isOffline()) { showToast("Connect to send photos"); return; }
+      galleryInput.value = "";
+      galleryInput.click();
+    });
+    document.getElementById("camera-btn").addEventListener("click", () => {
+      if (!activeConversation) return;
+      if (isOffline()) { showToast("Connect to send photos"); return; }
+      cameraInput.value = "";
+      cameraInput.click();
+    });
+    galleryInput.addEventListener("change", (e) => sendPhoto(e.target.files?.[0]));
+    cameraInput.addEventListener("change", (e) => sendPhoto(e.target.files?.[0]));
+
+    // ----- Image lightbox -----
+    const lightboxEl    = document.getElementById("lightbox");
+    const lightboxImgEl = document.getElementById("lightbox-img");
+    let lightboxImageId = null;
+
+    function openLightbox(imageId) {
+      lightboxImageId = imageId;
+      lightboxImgEl.src = imageViewUrl(imageId);
+      lightboxEl.classList.remove("hidden");
+      if (!history.state || history.state.view !== "lightbox") {
+        history.pushState({ view: "lightbox" }, "");
+      }
+    }
+    function closeLightbox() {
+      if (lightboxEl.classList.contains("hidden")) return;
+      lightboxEl.classList.add("hidden");
+      lightboxImgEl.src = "";
+      lightboxImageId = null;
+      if (history.state?.view === "lightbox") history.back();
+    }
+    lightboxEl.addEventListener("click", (e) => {
+      if (e.target.closest(".lightbox-btn")) return;
+      closeLightbox();
+    });
+    document.getElementById("lightbox-close").addEventListener("click", closeLightbox);
+    document.getElementById("lightbox-save").addEventListener("click", () => {
+      if (lightboxImageId) saveImage(lightboxImageId);
+    });
+
+    async function saveImage(imageId) {
+      try {
+        const res = await fetch(imageViewUrl(imageId));
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = objectUrl;
+        a.download = `neer-photo-${Date.now()}.jpg`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(objectUrl);
+        showToast("Photo saved");
+      } catch (err) {
+        dialogAlert("Save failed: " + (err?.message || err));
+      }
+    }
+
+    async function sendPhoto(file) {
+      if (!file || !activeConversation || !activeOther) return;
+      const caption = inputEl.value.trim();
+      inputEl.value = "";
+      setReply(null);
+      refreshComposerMode();
+
+      const tempId = tempMsgId();
+      const convId = activeConversation.$id;
+      const localUrl = URL.createObjectURL(file);
+      const optimistic = {
+        $id: tempId,
+        conversationId: convId,
+        senderId: me.$id,
+        receiverId: activeOther.$id,
+        text: caption,
+        $createdAt: new Date().toISOString(),
+        $updatedAt: null,
+        _pending: true,
+        _localImageUrl: localUrl,
+      };
+      renderMessage(optimistic);
+
+      try {
+        const fileDoc = await uploadMessageImage(file, me.$id);
+        const sent = await sendMessage(activeConversation, me.$id, caption, null, fileDoc.$id);
+        applyMessageDelete(tempId);
+        appendCachedMessage(me.$id, convId, sent);
+        renderMessage(sent);
+      } catch (err) {
+        applyMessageDelete(tempId);
+        dialogAlert("Photo send failed: " + (err?.message || err));
+      } finally {
+        URL.revokeObjectURL(localUrl);
+      }
+    }
     document.getElementById("call-btn").addEventListener("click", () => {
       if (activeOther) startOutgoingCall(activeOther);
     });
@@ -1745,7 +2180,13 @@
       }
     }
 
-    document.getElementById("settings-btn").addEventListener("click", openSettings);
+    document.getElementById("settings-btn").addEventListener("click", () => {
+      if (isOffline()) {
+        dialogAlert("Please check your internet connection and try again.");
+        return;
+      }
+      openSettings();
+    });
     document.getElementById("close-settings").addEventListener("click", closeSettings);
     settingsModal.addEventListener("click", (e) => {
       if (e.target === settingsModal) closeSettings();

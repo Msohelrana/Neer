@@ -12,12 +12,17 @@ import { onCollection } from "./realtime.js";
  */
 export async function ensureProfile(user) {
   if (wasProfileEnsured(user.$id)) return;
+  if (navigator.onLine === false) return;  // try again when we're back online
   try {
     await databases.getDocument(DB_ID, COL_USERS, user.$id);
     markProfileEnsured(user.$id);
     return;
   } catch (err) {
-    if (err?.code !== 404) throw err;
+    if (err?.code !== 404) {
+      // Network failure → don't block app load; we'll retry on next page open.
+      if (!err?.code) return;
+      throw err;
+    }
   }
   try {
     await databases.createDocument(
@@ -36,7 +41,10 @@ export async function ensureProfile(user) {
     );
   } catch (err) {
     // Race: another tab created it between our get and create.
-    if (err?.code !== 409) throw err;
+    if (err?.code !== 409) {
+      if (!err?.code) return;
+      throw err;
+    }
   }
   markProfileEnsured(user.$id);
 }

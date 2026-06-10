@@ -56,18 +56,19 @@ export async function loadMessages(conversationId, since) {
   return res.documents;
 }
 
-export async function sendMessage(conversation, meId, text, reply) {
+export async function sendMessage(conversation, meId, text, reply, imageId) {
   const otherId = conversation.participants.find((p) => p !== meId);
   const data = {
     conversationId: conversation.$id,
     senderId: meId,
     receiverId: otherId,
-    text,
+    text: text || "",
   };
   if (reply?.id) {
     data.replyToId   = reply.id;
     data.replyToText = (reply.text || "").slice(0, 280);
   }
+  if (imageId) data.imageId = imageId;
   return databases.createDocument(
     DB_ID,
     COL_MESSAGES,
