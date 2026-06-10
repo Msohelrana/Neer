@@ -47,3 +47,21 @@ export function imagePreviewUrl(fileId, width = 800) {
 export function imageViewUrl(fileId) {
   return storage.getFileView(BUCKET_IMAGES, fileId);
 }
+
+// Cross-origin `<img>` tags can't carry the session cookie, so a bucket with
+// Read=Users will 401 the request and the browser shows a broken-image icon.
+// fetch() with credentials does send the cookie, so we pull the bytes once and
+// hand back a same-origin blob URL the <img> can render. Callers MUST revoke
+// the URL (revoke on img load/error works well).
+export async function imagePreviewBlobUrl(fileId, width = 800) {
+  const url = storage.getFilePreview(BUCKET_IMAGES, fileId, width);
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) throw new Error("Preview fetch failed: " + res.status);
+  return URL.createObjectURL(await res.blob());
+}
+export async function imageViewBlobUrl(fileId) {
+  const url = storage.getFileView(BUCKET_IMAGES, fileId);
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) throw new Error("View fetch failed: " + res.status);
+  return URL.createObjectURL(await res.blob());
+}

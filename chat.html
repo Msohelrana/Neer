@@ -193,6 +193,8 @@
       sendMessage,
       editMessage,
       deleteMessage,
+      markDeleted,
+      DELETED_SENTINEL,
       subscribeMessages,
       subscribeAllMessages,
     } from "./js/chat.js";
@@ -329,7 +331,8 @@
       const lb = document.getElementById("lightbox");
       if (lb && !lb.classList.contains("hidden")) {
         lb.classList.add("hidden");
-        document.getElementById("lightbox-img").src = "";
+        const lbi = document.getElementById("lightbox-img");
+        if (lbi) lbi.src = "";
         return;
       }
       const sm = document.getElementById("settings-modal");
@@ -370,6 +373,10 @@
       return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
 
+    function isDeleted(msg) {
+      return msg?.text === DELETED_SENTINEL;
+    }
+
     // Detect/parse call-event messages encoded as `__CALL__{json}` in `text`.
     function parseCallEvent(text) {
       if (!text || !text.startsWith("__CALL__")) return null;
@@ -406,6 +413,17 @@
         paintCallEvent(bubble, msg);
         return;
       }
+      if (isDeleted(msg)) {
+        bubble.innerHTML = "";
+        bubble.classList.add("removed");
+        bubble.classList.remove("has-image");
+        const span = document.createElement("span");
+        span.className = "bubble-text removed-text";
+        span.textContent = msg.senderId === me.$id ? "You removed a message" : "Message removed";
+        bubble.appendChild(span);
+        return;
+      }
+      bubble.classList.remove("removed");
       const edited = msg.$updatedAt && msg.$updatedAt !== msg.$createdAt;
       const isMine = msg.senderId === me.$id;
       bubble.innerHTML = "";
@@ -565,7 +583,7 @@
         : "bubble " + (msg.senderId === me.$id ? "me" : "them");
       wrap.dataset.id = msg.$id;
       paintBubbleContent(wrap, msg);
-      if (!isCall) bindBubbleLongPress(wrap, msg.$id);
+      if (!isCall && !isDeleted(msg)) bindBubbleLongPress(wrap, msg.$id);
       messagesEl.appendChild(wrap);
       bubbleMap.set(msg.$id, wrap);
       paintReactions(msg.$id);
@@ -617,6 +635,8 @@
       const bubble = bubbleMap.get(messageId);
       if (!bubble) return;
       bubble.querySelector(".bubble-reactions")?.remove();
+      const msg = messageMap.get(messageId);
+      if (msg && isDeleted(msg)) return;  // no reactions on a removed message
       const list = reactionsMap.get(messageId) || [];
       if (!list.length) return;
       const groups = new Map(); // emoji -> { count, mine }
@@ -861,6 +881,7 @@
     }
 
     function openMsgSheet(msg, bubble) {
+      if (isDeleted(msg)) return;  // removed messages have no actions
       const isMine = msg.senderId === me.$id;
       renderSheetMain(msg, isMine);
       msgSheet.classList.remove("hidden");
@@ -1073,12 +1094,14 @@
       );
       if (!ok) return;
       try {
-        await deleteMessage(msg.$id);
-        // Realtime delete event will also clean up DOM + cache, but do it locally now too.
-        removeCachedMessage(me.$id, activeConversation.$id, msg.$id);
-        applyMessageDelete(msg.$id);
+        const updated = await markDeleted(msg.$id);
+        // Tombstone locally too — realtime update will repaint the same way.
+        updateCachedMessage(me.$id, activeConversation.$id, msg.$id, {
+          text: DELETED_SENTINEL, $updatedAt: updated.$updatedAt,
+        });
+        applyMessageUpdate({ ...msg, text: DELETED_SENTINEL, $updatedAt: updated.$updatedAt });
       } catch (err) {
-        dialogAlert("Delete failed: " + err.message);
+        dialogAlert("Remove failed: " + err.message);
       }
     }
 
@@ -1290,6 +1313,9 @@
               const { label, missed } = formatCallSummary(callInfo, last.senderId === me.$id);
               display = "📞 " + label;
               prefix = "";
+            } else if (isDeleted(last)) {
+              prefix = "";
+              display = last.senderId === me.$id ? "You removed a message" : "Message removed";
             } else if (last.imageId && !last.text) {
               prefix = last.senderId === me.$id ? "You: " : "";
               display = "📷 Photo";
@@ -1402,8 +1428,8 @@
             (activeConversation && msg.conversationId === activeConversation.$id)) {
           markSeen(me.$id, msg.conversationId, msg.$createdAt);
         }
-        // Notify on incoming messages from others (skip call-event records).
-        if (msg.senderId !== me.$id && !parseCallEvent(msg.text)) {
+        // Notify on incoming messages from others (skip call-event + removed).
+        if (msg.senderId !== me.$id && !parseCallEvent(msg.text) && !isDeleted(msg)) {
           const sender = (getCachedUserList(me.$id)?.users || []).find((u) => u.$id === msg.senderId);
           const previewText = msg.text || (msg.imageId ? "📷 Photo" : "");
           showMessageNotification(sender?.name || "New message", previewText, msg.conversationId, msg.senderId);
@@ -1565,7 +1591,8 @@
 
     function setReply(msg) {
       let snippet = msg?.text || "";
-      if (msg && !snippet && msg.imageId) snippet = "📷 Photo";
+      if (msg && isDeleted(msg)) snippet = "Message removed";
+      else if (msg && !snippet && msg.imageId) snippet = "📷 Photo";
       pendingReply = msg ? { id: msg.$id, text: snippet } : null;
       if (pendingReply) {
         const preview = pendingReply.text.length > 120
@@ -1995,12 +2022,18 @@
         history.pushState({ view: "lightbox" }, "");
       }
     }
-    function closeLightbox() {
-      if (lightboxEl.classList.contains("hidden")) return;
+    function hideLightboxUI() {
       lightboxEl.classList.add("hidden");
       lightboxImgEl.src = "";
       lightboxImageId = null;
+    }
+    // Pop the "lightbox" history entry — popstate handler hides the UI. This
+    // way phone-back and the X button both flow through one path, and we don't
+    // end up double-popping into leaveActiveConversation.
+    function closeLightbox() {
+      if (lightboxEl.classList.contains("hidden")) return;
       if (history.state?.view === "lightbox") history.back();
+      else hideLightboxUI();
     }
     lightboxEl.addEventListener("click", (e) => {
       if (e.target.closest(".lightbox-btn")) return;
@@ -2013,7 +2046,7 @@
 
     async function saveImage(imageId) {
       try {
-        const res = await fetch(imageViewUrl(imageId));
+        const res = await fetch(imageViewUrl(imageId), { credentials: "include" });
         if (!res.ok) throw new Error("HTTP " + res.status);
         const blob = await res.blob();
         const objectUrl = URL.createObjectURL(blob);

@@ -90,6 +90,16 @@ export async function deleteMessage(messageId) {
   return databases.deleteDocument(DB_ID, COL_MESSAGES, messageId);
 }
 
+// Tombstone a message instead of deleting it — replaces text with a sentinel
+// so both sides render a "Message removed" placeholder. Used by "Remove for
+// everyone" so the chat history shows the message ever existed.
+export const DELETED_SENTINEL = "__DELETED__";
+export async function markDeleted(messageId) {
+  return databases.updateDocument(DB_ID, COL_MESSAGES, messageId, {
+    text: DELETED_SENTINEL,
+  });
+}
+
 /**
  * Subscribes to message create/update/delete events for the given conversation.
  * Pass any combination of { onCreate, onUpdate, onDelete }; returns an unsubscribe fn.

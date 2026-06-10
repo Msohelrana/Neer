@@ -1584,16 +1584,28 @@ a:hover { text-decoration: underline; }
 
 .bubble.pending { opacity: 0.78; }
 
+/* "Message removed" tombstone — italic, muted, no menu, no reactions. */
+.bubble.removed {
+  opacity: 0.65;
+  font-style: italic;
+}
+.bubble.removed .removed-text {
+  font-style: italic;
+}
+.bubble.removed .bubble-menu-btn,
+.bubble.removed .bubble-reactions,
+.bubble.removed .bubble-quote { display: none; }
+
 /* Image bubbles: flush rounded image, no bubble background/padding when
    the message is image-only. Text caption sits below the image when present.
    Width is fixed-ish so portraits render tall and landscapes render wide,
    matching Messenger's natural-aspect preview. */
 .bubble .bubble-image {
   display: block;
-  width: 280px;
-  max-width: 72vw;
+  width: 300px;
+  max-width: 75vw;
   height: auto;
-  border-radius: 18px;
+  border-radius: 22px;
   cursor: pointer;
   -webkit-user-select: none;
           user-select: none;
@@ -1602,7 +1614,7 @@ a:hover { text-decoration: underline; }
   background: transparent !important;
   padding: 0;
   border: none;
-  max-width: 280px;
+  max-width: 75vw;
 }
 .bubble.has-image .bubble-text {
   display: block;
