@@ -29,9 +29,11 @@ export function compressImage(file, maxDim = IMAGE_MAX_DIM, quality = IMAGE_JPEG
   });
 }
 
-export async function uploadMessageImage(file, meId) {
-  const compressed = await compressImage(file);
-  return storage.createFile(BUCKET_IMAGES, ID.unique(), compressed, [
+// Images are downscaled client-side; videos can't be transcoded in the
+// browser, so they upload as-is (size-capped by the caller).
+export async function uploadMessageMedia(file, meId) {
+  const payload = file.type.startsWith("video/") ? file : await compressImage(file);
+  return storage.createFile(BUCKET_IMAGES, ID.unique(), payload, [
     Permission.read(Role.users()),
     Permission.update(Role.user(meId)),
     Permission.delete(Role.user(meId)),
@@ -53,15 +55,19 @@ export function imageViewUrl(fileId) {
 // fetch() with credentials does send the cookie, so we pull the bytes once and
 // hand back a same-origin blob URL the <img> can render. Callers MUST revoke
 // the URL (revoke on img load/error works well).
+// Both resolve to { url, type } — the MIME type tells the caller whether the
+// file is a photo or a video.
 export async function imagePreviewBlobUrl(fileId, width = 800) {
   const url = storage.getFilePreview(BUCKET_IMAGES, fileId, width);
   const res = await fetch(url, { credentials: "include" });
   if (!res.ok) throw new Error("Preview fetch failed: " + res.status);
-  return URL.createObjectURL(await res.blob());
+  const blob = await res.blob();
+  return { url: URL.createObjectURL(blob), type: blob.type };
 }
 export async function imageViewBlobUrl(fileId) {
   const url = storage.getFileView(BUCKET_IMAGES, fileId);
   const res = await fetch(url, { credentials: "include" });
   if (!res.ok) throw new Error("View fetch failed: " + res.status);
-  return URL.createObjectURL(await res.blob());
+  const blob = await res.blob();
+  return { url: URL.createObjectURL(blob), type: blob.type };
 }

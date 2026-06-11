@@ -4,6 +4,9 @@
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
 self.addEventListener("fetch", (event) => {
+  // Only same-origin requests; cross-origin (Appwrite) go straight to the
+  // network so CORS failures surface cleanly instead of as SW errors.
+  if (new URL(event.request.url).origin !== self.location.origin) return;
   event.respondWith(fetch(event.request));
 });
 

@@ -173,6 +173,7 @@
     </button>
     <div class="lightbox-counter hidden" id="lightbox-counter"></div>
     <img id="lightbox-img" alt="Photo" />
+    <video id="lightbox-video" class="hidden" controls playsinline></video>
   </div>
 
   <div class="camera-overlay hidden" id="camera-overlay" role="dialog" aria-modal="true" aria-label="Camera">
@@ -279,26 +280,24 @@
       outboxForConversation,
     } from "./js/outbox.js";
     import {
-      uploadMessageImage,
+      uploadMessageMedia,
       imageViewUrl,
-      imagePreviewBlobUrl,
       imageViewBlobUrl,
     } from "./js/photos.js";
 
-    // <img> can't send the Appwrite session cookie cross-origin (401 → broken
-    // icon), so previews are fetched once with credentials and served to the
-    // bubble as same-origin blob URLs, cached per file for re-renders.
+    // <img>/<video> can't send the Appwrite session cookie cross-origin
+    // (401 → broken media), so files are fetched once with credentials and
+    // served as same-origin blob URLs, cached per file for re-renders.
+    // Resolves to { url, type } — type distinguishes photos from videos.
     const imageBlobCache = new Map();
-    function bubbleImageUrl(fileId) {
+    function bubbleMediaUrl(fileId) {
       if (!imageBlobCache.has(fileId)) {
-        // Preview (server-side resize) 403s on Appwrite Cloud's free plan —
-        // fall back to the raw file, which uploads pre-compressed anyway.
-        const p = imagePreviewBlobUrl(fileId, 800)
-          .catch(() => imageViewBlobUrl(fileId))
-          .catch((err) => {
-            imageBlobCache.delete(fileId); // allow retry on next render
-            throw err;
-          });
+        // Straight to the raw file — server-side previews 403 on Appwrite
+        // Cloud's free plan, and photos upload pre-compressed anyway.
+        const p = imageViewBlobUrl(fileId).catch((err) => {
+          imageBlobCache.delete(fileId); // allow retry on next render
+          throw err;
+        });
         imageBlobCache.set(fileId, p);
       }
       return imageBlobCache.get(fileId);
@@ -389,9 +388,7 @@
       }
       const lb = document.getElementById("lightbox");
       if (lb && !lb.classList.contains("hidden")) {
-        lb.classList.add("hidden");
-        const lbi = document.getElementById("lightbox-img");
-        if (lbi) lbi.src = "";
+        hideLightboxUI(); // hoisted — also stops a playing video
         return;
       }
       const sm = document.getElementById("settings-modal");
@@ -523,24 +520,42 @@
       if (hasImage) {
         const frame = document.createElement("div");
         frame.className = "bubble-image-frame";
-        const img = document.createElement("img");
-        img.className = "bubble-image";
-        img.alt = "Photo";
-        img.loading = "lazy";
+        const attachMedia = (url, type) => {
+          if (type && type.startsWith("video/")) {
+            const v = document.createElement("video");
+            v.className = "bubble-image";
+            v.src = url;
+            v.controls = true;
+            v.playsInline = true;
+            v.preload = "metadata";
+            frame.appendChild(v);
+          } else {
+            const img = document.createElement("img");
+            img.className = "bubble-image";
+            img.alt = "Photo";
+            img.loading = "lazy";
+            img.src = url;
+            if (msg.imageId) {
+              img.addEventListener("click", (e) => {
+                e.stopPropagation();
+                openLightbox(msg.imageId);
+              });
+            }
+            frame.appendChild(img);
+          }
+        };
         if (msg._localImageUrl) {
-          img.src = msg._localImageUrl;
+          attachMedia(msg._localImageUrl, msg._localMime || "image/jpeg");
         } else {
-          bubbleImageUrl(msg.imageId)
-            .then((url) => { img.src = url; })
-            .catch(() => { img.alt = "Photo unavailable"; });
+          bubbleMediaUrl(msg.imageId)
+            .then(({ url, type }) => attachMedia(url, type))
+            .catch(() => {
+              const fail = document.createElement("span");
+              fail.className = "bubble-text";
+              fail.textContent = "Media unavailable";
+              frame.appendChild(fail);
+            });
         }
-        if (msg.imageId) {
-          img.addEventListener("click", (e) => {
-            e.stopPropagation();
-            openLightbox(msg.imageId);
-          });
-        }
-        frame.appendChild(img);
         bubble.appendChild(frame);
       }
 
@@ -658,7 +673,8 @@
       // is the divider's left neighbour; grouped dividers are tucked before
       // the run to keep the run as the container's last element.
       const isPhotoOnly = !isCall && !isDeleted(msg) &&
-        (msg.imageId || msg._localImageUrl) && !msg.text;
+        (msg.imageId || msg._localImageUrl) && !msg.text &&
+        !(msg._localMime && msg._localMime.startsWith("video/"));
       const side = msg.senderId === me.$id ? "me" : "them";
       const divider = dividerMap.get(msg.$id);
       const prev = divider.previousElementSibling;
@@ -2148,7 +2164,7 @@
     // ----- Photo sending -----
     const galleryInput = document.createElement("input");
     galleryInput.type = "file";
-    galleryInput.accept = "image/*";
+    galleryInput.accept = "image/*,video/*";
     galleryInput.multiple = true;
     galleryInput.style.display = "none";
     document.body.appendChild(galleryInput);
@@ -2310,21 +2326,25 @@
       if (many) lightboxCounterEl.textContent = `${i + 1} / ${lightboxGallery.length}`;
     }
 
+    const lightboxVideoEl = document.getElementById("lightbox-video");
+
     function showLightboxImage(imageId) {
       lightboxImageId = imageId;
-      if (lightboxImgEl.dataset.blobUrl) {
-        URL.revokeObjectURL(lightboxImgEl.dataset.blobUrl);
-        delete lightboxImgEl.dataset.blobUrl;
-      }
       lightboxImgEl.src = "";
-      // Show the cached preview instantly, then swap in the full-res blob.
-      bubbleImageUrl(imageId).then((url) => {
-        if (lightboxImageId === imageId && !lightboxImgEl.dataset.blobUrl) lightboxImgEl.src = url;
-      }).catch(() => {});
-      imageViewBlobUrl(imageId).then((url) => {
-        if (lightboxImageId !== imageId) { URL.revokeObjectURL(url); return; }
-        lightboxImgEl.src = url;
-        lightboxImgEl.dataset.blobUrl = url;
+      lightboxVideoEl.pause();
+      lightboxVideoEl.removeAttribute("src");
+      lightboxImgEl.classList.remove("hidden");
+      lightboxVideoEl.classList.add("hidden");
+      // The shared cache already holds the full-quality file.
+      bubbleMediaUrl(imageId).then(({ url, type }) => {
+        if (lightboxImageId !== imageId) return;
+        if (type && type.startsWith("video/")) {
+          lightboxImgEl.classList.add("hidden");
+          lightboxVideoEl.classList.remove("hidden");
+          lightboxVideoEl.src = url;
+        } else {
+          lightboxImgEl.src = url;
+        }
       }).catch(() => {});
       paintLightboxNav();
     }
@@ -2345,11 +2365,10 @@
     }
     function hideLightboxUI() {
       lightboxEl.classList.add("hidden");
-      if (lightboxImgEl.dataset.blobUrl) {
-        URL.revokeObjectURL(lightboxImgEl.dataset.blobUrl);
-        delete lightboxImgEl.dataset.blobUrl;
-      }
+      // Media URLs come from the shared cache — stop playback, don't revoke.
       lightboxImgEl.src = "";
+      lightboxVideoEl.pause();
+      lightboxVideoEl.removeAttribute("src");
       lightboxImageId = null;
     }
     // Pop the "lightbox" history entry — popstate handler hides the UI. This
@@ -2403,7 +2422,8 @@
         const objectUrl = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = objectUrl;
-        a.download = `neer-photo-${Date.now()}.jpg`;
+        const ext = (blob.type.split("/")[1] || "jpg").split(";")[0];
+        a.download = `neer-${blob.type.startsWith("video/") ? "video" : "photo"}-${Date.now()}.${ext}`;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -2414,8 +2434,19 @@
       }
     }
 
+    const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // Appwrite bucket limit
+
     async function sendPhotos(fileList) {
-      const files = Array.from(fileList || []).filter((f) => f && f.type.startsWith("image/"));
+      const all = Array.from(fileList || []).filter(
+        (f) => f && (f.type.startsWith("image/") || f.type.startsWith("video/"))
+      );
+      const files = all.filter((f) => {
+        if (f.type.startsWith("video/") && f.size > MAX_VIDEO_BYTES) {
+          dialogAlert(`"${f.name}" is too large — videos can be up to 50 MB.`);
+          return false;
+        }
+        return true;
+      });
       if (!files.length || !activeConversation || !activeOther) return;
       const caption = inputEl.value.trim();
       inputEl.value = "";
@@ -2440,6 +2471,7 @@
           $updatedAt: null,
           _pending: true,
           _localImageUrl: localUrl,
+          _localMime: file.type,
         });
         return { file, tempId, localUrl, text };
       });
@@ -2447,7 +2479,7 @@
       // Upload one at a time so the messages land in the order they were picked.
       for (const job of jobs) {
         try {
-          const fileDoc = await uploadMessageImage(job.file, me.$id);
+          const fileDoc = await uploadMessageMedia(job.file, me.$id);
           const sent = await sendMessage(conv, me.$id, job.text, null, fileDoc.$id);
           applyMessageDelete(job.tempId);
           appendCachedMessage(me.$id, convId, sent);
