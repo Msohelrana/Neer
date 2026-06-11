@@ -382,6 +382,11 @@
     // doesn't quit while a chat is open. Settings modal takes priority — back
     // closes it first, then (next back) leaves the active conversation.
     window.addEventListener("popstate", () => {
+      const cam = document.getElementById("camera-overlay");
+      if (cam && !cam.classList.contains("hidden")) {
+        closeCamera(); // hoisted — defined with the camera logic below
+        return;
+      }
       const lb = document.getElementById("lightbox");
       if (lb && !lb.classList.contains("hidden")) {
         lb.classList.add("hidden");
@@ -2201,6 +2206,18 @@
       }
       resetCameraUI();
       camOverlay.classList.remove("hidden");
+      // Own a history entry so the phone back button closes the camera
+      // instead of quitting the app.
+      if (!history.state || history.state.view !== "camera") {
+        history.pushState({ view: "camera" }, "");
+      }
+    }
+
+    // Close via the history entry when we own one, so phone-back and the X
+    // button flow through the same popstate path.
+    function requestCloseCamera() {
+      if (history.state?.view === "camera") history.back();
+      else closeCamera();
     }
 
     function resetCameraUI() {
@@ -2251,7 +2268,7 @@
     camSendBtn.addEventListener("click", () => {
       if (!camBlob) return;
       const file = new File([camBlob], "camera.jpg", { type: "image/jpeg" });
-      closeCamera();
+      requestCloseCamera();
       sendPhotos([file]);
     });
     camFlipBtn.addEventListener("click", async () => {
@@ -2263,7 +2280,7 @@
         showToast("Couldn't switch camera");
       }
     });
-    document.getElementById("camera-close").addEventListener("click", closeCamera);
+    document.getElementById("camera-close").addEventListener("click", requestCloseCamera);
     galleryInput.addEventListener("change", (e) => sendPhotos(e.target.files));
     cameraInput.addEventListener("change", (e) => sendPhotos(e.target.files));
 

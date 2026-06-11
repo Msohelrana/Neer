@@ -2246,38 +2246,47 @@ a:hover {
 .bubble .bubble-image {
   display: block;
   width: 240px;
-  max-width: 30vw;
+  max-width: 50vw;
   height: auto;
   border-radius: 10px;
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
 }
+
 /* Messenger-style photo runs — 2+ consecutive caption-less photos from the
    same sender collapse into a grid of uniform square tiles. */
 .photo-run {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  max-width: min(70%, 372px); /* 3 tiles per row */
+  max-width: min(70%, 372px);
+  /* 3 tiles per row */
 }
+
 .photo-run.me {
   align-self: flex-end;
   justify-content: flex-end;
 }
+
 .photo-run.them {
   align-self: flex-start;
-  margin-left: 38px; /* avatar gutter moves from the tiles to the run */
+  margin-left: 38px;
+  /* avatar gutter moves from the tiles to the run */
 }
+
 .photo-run .bubble {
   max-width: none;
   margin-left: 0;
 }
+
 .photo-run .bubble-image {
   width: 120px;
-  height: auto; /* natural aspect ratio — never crop the picture */
+  height: auto;
+  /* natural aspect ratio — never crop the picture */
   max-width: none;
 }
+
 /* One sender avatar per run — on the first tile, which sits at the run's
    left edge so the avatar lands in the gutter. */
 .photo-run.them .bubble:not(:first-child) .bubble-avatar {
@@ -2365,12 +2374,20 @@ a:hover {
   top: 50%;
   transform: translateY(-50%);
 }
-.lightbox-prev { left: 12px; }
-.lightbox-next { right: 12px; }
+
+.lightbox-prev {
+  left: 12px;
+}
+
+.lightbox-next {
+  right: 12px;
+}
+
 .lightbox-prev:active,
 .lightbox-next:active {
   transform: translateY(-50%) scale(0.92);
 }
+
 .lightbox-counter {
   position: absolute;
   top: max(28px, env(safe-area-inset-top, 28px));
@@ -2395,19 +2412,23 @@ a:hover {
   align-items: center;
   justify-content: center;
 }
+
 .camera-overlay video {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
+
 .camera-overlay video.mirrored {
   transform: scaleX(-1);
 }
+
 .camera-overlay img {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
 }
+
 /* Soft dark gradients so the controls read on any scene. */
 .camera-overlay::before,
 .camera-overlay::after {
@@ -2417,22 +2438,26 @@ a:hover {
   right: 0;
   pointer-events: none;
 }
+
 .camera-overlay::before {
   top: 0;
   height: 110px;
   background: linear-gradient(rgba(0, 0, 0, 0.5), transparent);
 }
+
 .camera-overlay::after {
   bottom: 0;
   height: 170px;
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
 }
+
 .camera-close {
   left: 16px;
   right: auto;
   background: rgba(0, 0, 0, 0.35);
   z-index: 2;
 }
+
 .camera-controls {
   position: absolute;
   left: 0;
@@ -2441,6 +2466,7 @@ a:hover {
   height: 80px;
   z-index: 2;
 }
+
 /* Classic shutter: white ring with an inner disc, always dead-center. */
 .camera-shutter {
   position: absolute;
@@ -2454,6 +2480,7 @@ a:hover {
   background: transparent;
   cursor: pointer;
 }
+
 .camera-shutter::after {
   content: "";
   position: absolute;
@@ -2462,9 +2489,11 @@ a:hover {
   background: #fff;
   transition: transform 0.1s ease;
 }
+
 .camera-shutter:active::after {
   transform: scale(0.82);
 }
+
 /* Send takes the shutter's center spot on the preview screen. */
 .camera-send {
   position: absolute;
@@ -2482,12 +2511,16 @@ a:hover {
   box-shadow: var(--shadow-glow);
   cursor: pointer;
 }
+
 .camera-send:active {
   transform: translate(-50%, -50%) scale(0.92);
 }
+
 .camera-send svg {
-  margin-left: 4px; /* optically center the paper plane */
+  margin-left: 4px;
+  /* optically center the paper plane */
 }
+
 /* Flip / retake flank the shutter on the left. */
 .camera-side-btn {
   position: absolute;
@@ -2504,6 +2537,7 @@ a:hover {
   color: #fff;
   cursor: pointer;
 }
+
 .camera-side-btn:active {
   transform: translate(-50%, -50%) scale(0.92);
 }
