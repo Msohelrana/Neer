@@ -2385,7 +2385,7 @@ a:hover {
   pointer-events: none;
 }
 
-/* In-app camera — full-screen live view with a bottom control bar. */
+/* In-app camera — full-screen live view, shutter dead-center like Messenger. */
 .camera-overlay {
   position: fixed;
   inset: 0;
@@ -2408,51 +2408,104 @@ a:hover {
   max-height: 100%;
   object-fit: contain;
 }
+/* Soft dark gradients so the controls read on any scene. */
+.camera-overlay::before,
+.camera-overlay::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+.camera-overlay::before {
+  top: 0;
+  height: 110px;
+  background: linear-gradient(rgba(0, 0, 0, 0.5), transparent);
+}
+.camera-overlay::after {
+  bottom: 0;
+  height: 170px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
+}
 .camera-close {
   left: 16px;
   right: auto;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 2;
 }
 .camera-controls {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: max(28px, env(safe-area-inset-bottom, 28px));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: clamp(36px, 12vw, 64px);
+  bottom: max(30px, env(safe-area-inset-bottom, 30px));
+  height: 80px;
+  z-index: 2;
 }
+/* Classic shutter: white ring with an inner disc, always dead-center. */
 .camera-shutter {
-  width: 72px;
-  height: 72px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 78px;
+  height: 78px;
   border-radius: 50%;
-  border: 5px solid #fff;
-  background: rgba(255, 255, 255, 0.25);
+  border: 4px solid #fff;
+  background: transparent;
   cursor: pointer;
-  transition: transform 0.08s ease, background 0.12s ease;
 }
-.camera-shutter:active {
-  transform: scale(0.9);
-  background: rgba(255, 255, 255, 0.5);
+.camera-shutter::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.1s ease;
 }
-.camera-side-btn,
+.camera-shutter:active::after {
+  transform: scale(0.82);
+}
+/* Send takes the shutter's center spot on the preview screen. */
 .camera-send {
-  width: 52px;
-  height: 52px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 70px;
+  height: 70px;
   border-radius: 50%;
   border: none;
   display: grid;
   place-items: center;
-  cursor: pointer;
-}
-.camera-side-btn {
-  background: rgba(255, 255, 255, 0.16);
-  color: #fff;
-}
-.camera-send {
   background: var(--accent);
   color: #fff;
   box-shadow: var(--shadow-glow);
+  cursor: pointer;
+}
+.camera-send:active {
+  transform: translate(-50%, -50%) scale(0.92);
+}
+.camera-send svg {
+  margin-left: 4px; /* optically center the paper plane */
+}
+/* Flip / retake flank the shutter on the left. */
+.camera-side-btn {
+  position: absolute;
+  left: 22%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: none;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  cursor: pointer;
+}
+.camera-side-btn:active {
+  transform: translate(-50%, -50%) scale(0.92);
 }
 
 .bubble.pending .time {
