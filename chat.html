@@ -61,6 +61,9 @@
       <div class="messages" id="messages">
         <div class="placeholder">No conversation selected.</div>
       </div>
+      <button type="button" class="scroll-bottom hidden" id="scroll-bottom" aria-label="Scroll to latest messages">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 4v13M5.5 12.5 12 19l6.5-6.5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <form class="composer hidden" id="composer">
         <div class="reply-preview hidden" id="reply-preview">
           <div class="reply-preview-body">
@@ -395,6 +398,17 @@
         messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: "instant" });
       });
     }
+
+    // Floating ↓ button — appears once the reader scrolls up past a screenful,
+    // jumps back to the newest message, Messenger-style.
+    const scrollBottomBtn = document.getElementById("scroll-bottom");
+    messagesEl.addEventListener("scroll", () => {
+      const dist = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+      scrollBottomBtn.classList.toggle("hidden", dist < 300);
+    }, { passive: true });
+    scrollBottomBtn.addEventListener("click", () => {
+      messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: "smooth" });
+    });
 
     function leaveActiveConversation() {
       chatEl.dataset.view = "sidebar";

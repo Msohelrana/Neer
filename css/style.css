@@ -520,6 +520,7 @@ a:hover {
    ============================================================ */
 
 .thread {
+  position: relative; /* anchors the floating scroll-to-bottom button */
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -2252,6 +2253,30 @@ a:hover {
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
+}
+
+/* Floating ↓ over the messages — visible while scrolled away from the
+   newest message. */
+.scroll-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: 92px;
+  transform: translateX(-50%);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel-3);
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  z-index: 5;
+  animation: fade-in 0.15s ease-out both;
+}
+.scroll-bottom:active {
+  transform: translateX(-50%) scale(0.92);
 }
 
 /* "Show N earlier messages" — capped history loads the rest on demand. */
