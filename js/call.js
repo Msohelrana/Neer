@@ -119,6 +119,16 @@ export class Call {
     this._applyLoudspeaker(on).catch((e) => console.warn("Loudspeaker switch:", e?.message));
   }
 
+  // Find a real output device by label (Chrome on Android exposes
+  // "Earpiece" / "Speakerphone" audiooutput devices once the mic permission
+  // is granted, which it always is during a call).
+  async _findOutput(regex) {
+    try {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      return devs.find((d) => d.kind === "audiooutput" && regex.test(d.label.toLowerCase())) || null;
+    } catch { return null; }
+  }
+
   async _applyLoudspeaker(on) {
     if (!this.remoteAudio || !this.remoteStream) return;
     this.loudspeaker = !!on;
@@ -129,7 +139,16 @@ export class Call {
       this.gainNode = null;
     }
     if (on) {
-      // Loudspeaker: media speaker via Web Audio (gain ~1.8×). Force default sink.
+      // Loudspeaker: explicit speakerphone sink when the platform exposes
+      // one; otherwise the legacy Web Audio path (default sink + gain boost).
+      const spk = await this._findOutput(/speakerphone|\bspeaker\b/);
+      if (spk && this.remoteAudio.setSinkId) {
+        try {
+          await this.remoteAudio.setSinkId(spk.deviceId);
+          this.remoteAudio.muted = false;
+          return;
+        } catch {}
+      }
       try { if (this.remoteAudio.setSinkId) await this.remoteAudio.setSinkId(""); } catch {}
       this.remoteAudio.muted = true;
       try {
@@ -145,9 +164,19 @@ export class Call {
         this.remoteAudio.muted = false;
       }
     } else {
-      // Earpiece: plain <audio> element + 'communications' sink hint (Chromium).
+      // Earpiece (calling speaker): explicit earpiece sink where exposed
+      // (Android Chrome); fall back to Chromium's 'communications' hint
+      // (Windows). Platforms with neither can't route to the earpiece.
       this.remoteAudio.muted = false;
-      try { if (this.remoteAudio.setSinkId) await this.remoteAudio.setSinkId("communications"); } catch {}
+      try {
+        if (this.remoteAudio.setSinkId) {
+          const ear = await this._findOutput(/earpiece|receiver/);
+          if (ear) await this.remoteAudio.setSinkId(ear.deviceId);
+          else await this.remoteAudio.setSinkId("communications");
+        }
+      } catch (e) {
+        console.warn("Earpiece routing unavailable:", e?.message);
+      }
     }
   }
 
