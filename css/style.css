@@ -2246,7 +2246,7 @@ a:hover {
 .bubble .bubble-image {
   display: block;
   width: 240px;
-  max-width: 50vw;
+  max-width: 65vw;
   height: auto;
   border-radius: 10px;
   cursor: pointer;
