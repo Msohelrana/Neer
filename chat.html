@@ -385,7 +385,8 @@
     // Coalesce bottom-snaps to one per frame — setting scrollTop per rendered
     // message forces a layout pass each time and freezes big history loads.
     let scrollPending = false;
-    let bulkRender = false; // true while painting cached history
+    let bulkRender = false;  // true while painting cached history
+    let historyStart = 0;    // index into the cached list where rendering begins
     function scheduleScrollToBottom() {
       if (scrollPending) return;
       scrollPending = true;
@@ -1325,6 +1326,57 @@
       applyMessageDelete(msg.$id);
     }
 
+    const INITIAL_RENDER_CAP = 80; // bubbles painted when a chat opens
+    const HISTORY_CHUNK = 50;      // older messages revealed per click
+
+    // "Show 50 earlier messages" — re-renders the visible window grown by one
+    // chunk through the cheap bulk path, keeping the old top message anchored
+    // so the reader doesn't lose their place.
+    function makeEarlierButton(convId) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "load-earlier";
+      btn.textContent = `Show ${Math.min(HISTORY_CHUNK, historyStart)} earlier messages`;
+      btn.addEventListener("click", () => {
+        const cached = getCachedMessages(me.$id, convId);
+        const prevTopId = cached[historyStart]?.$id;
+        historyStart = Math.max(0, historyStart - HISTORY_CHUNK);
+        messagesEl.innerHTML = "";
+        mediaObserver.disconnect();
+        renderedIds.clear();
+        bubbleMap.clear();
+        dividerMap.clear();
+        anchorIds.clear();
+        shownDividerId = null;
+        lastAnchorTime = null;
+        if (historyStart > 0) messagesEl.appendChild(makeEarlierButton(convId));
+        bulkRender = true;
+        cached.slice(historyStart).forEach(renderMessage);
+        // Re-render queued-but-unsent outbox bubbles too (still bulk — a
+        // scheduled bottom-snap would override the anchor scroll below).
+        outboxForConversation(me.$id, convId).forEach((item) => {
+          renderMessage({
+            $id: item.tempId,
+            conversationId: convId,
+            senderId: me.$id,
+            receiverId: item.receiverId,
+            text: item.text,
+            $createdAt: item.queuedAt,
+            $updatedAt: null,
+            _pending: true,
+            ...(item.reply ? { replyToId: item.reply.id, replyToText: (item.reply.text || "").slice(0, 280) } : {}),
+          });
+        });
+        bulkRender = false;
+        reactionsMap.forEach((_, id) => paintReactions(id));
+        repaintReceiptIndicator();
+        const anchor = prevTopId && bubbleMap.get(prevTopId);
+        if (anchor) anchor.scrollIntoView({ block: "start", behavior: "instant" });
+        else messagesEl.scrollTop = 0;
+      });
+      return btn;
+    }
+
     async function openConversation(other) {
       activeOther = other;
       headerEl.innerHTML = "";
@@ -1389,36 +1441,12 @@
       const convId = activeConversation.$id;
 
       // Paint only the latest chunk of history — thousands of bubbles in one
-      // go locks up the main thread. The rest renders on demand.
-      const INITIAL_RENDER_CAP = 150;
+      // go locks up the main thread. Older messages load 50 at a time.
       const cached = getCachedMessages(me.$id, convId);
-      const skipped = Math.max(0, cached.length - INITIAL_RENDER_CAP);
-      if (skipped > 0) {
-        const earlier = document.createElement("button");
-        earlier.type = "button";
-        earlier.className = "load-earlier";
-        earlier.textContent = `Show ${skipped} earlier messages`;
-        earlier.addEventListener("click", () => {
-          // Re-render the full history through the cheap bulk path.
-          messagesEl.innerHTML = "";
-          mediaObserver.disconnect();
-          renderedIds.clear();
-          bubbleMap.clear();
-          dividerMap.clear();
-          anchorIds.clear();
-          shownDividerId = null;
-          lastAnchorTime = null;
-          bulkRender = true;
-          getCachedMessages(me.$id, convId).forEach(renderMessage);
-          bulkRender = false;
-          reactionsMap.forEach((_, id) => paintReactions(id));
-          repaintReceiptIndicator();
-          messagesEl.scrollTop = 0; // reader starts at the old messages
-        });
-        messagesEl.appendChild(earlier);
-      }
+      historyStart = Math.max(0, cached.length - INITIAL_RENDER_CAP);
+      if (historyStart > 0) messagesEl.appendChild(makeEarlierButton(convId));
       bulkRender = true;
-      cached.slice(skipped).forEach(renderMessage);
+      cached.slice(historyStart).forEach(renderMessage);
       bulkRender = false;
       messagesEl.scrollTop = messagesEl.scrollHeight; // single bottom-snap
 
