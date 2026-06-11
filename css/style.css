@@ -2254,6 +2254,22 @@ a:hover {
   user-select: none;
 }
 
+/* Video bubble before download — dark tile with a play button; the full
+   file only downloads when tapped. */
+.bubble .video-placeholder {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 10;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+}
+.bubble .video-placeholder.loading {
+  opacity: 0.55;
+  cursor: progress;
+}
+
 /* Messenger-style photo runs — 2+ consecutive caption-less photos from the
    same sender collapse into a grid of uniform square tiles. */
 .photo-run {

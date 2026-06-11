@@ -55,6 +55,15 @@ export function imageViewUrl(fileId) {
 // fetch() with credentials does send the cookie, so we pull the bytes once and
 // hand back a same-origin blob URL the <img> can render. Callers MUST revoke
 // the URL (revoke on img load/error works well).
+// MIME type without downloading the body — used to decide how to render a
+// media bubble before committing to a (possibly huge) download.
+export async function mediaContentType(fileId) {
+  const url = storage.getFileView(BUCKET_IMAGES, fileId);
+  const res = await fetch(url, { method: "HEAD", credentials: "include" });
+  if (!res.ok) throw new Error("HEAD failed: " + res.status);
+  return res.headers.get("content-type") || "";
+}
+
 // Both resolve to { url, type } — the MIME type tells the caller whether the
 // file is a photo or a video.
 export async function imagePreviewBlobUrl(fileId, width = 800) {

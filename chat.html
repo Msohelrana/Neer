@@ -283,6 +283,7 @@
       uploadMessageMedia,
       imageViewUrl,
       imageViewBlobUrl,
+      mediaContentType,
     } from "./js/photos.js";
 
     // <img>/<video> can't send the Appwrite session cookie cross-origin
@@ -301,6 +302,19 @@
         imageBlobCache.set(fileId, p);
       }
       return imageBlobCache.get(fileId);
+    }
+
+    // MIME type per file (HEAD request — no body), cached.
+    const mediaKindCache = new Map();
+    function mediaKind(fileId) {
+      if (!mediaKindCache.has(fileId)) {
+        const p = mediaContentType(fileId).catch((err) => {
+          mediaKindCache.delete(fileId);
+          throw err;
+        });
+        mediaKindCache.set(fileId, p);
+      }
+      return mediaKindCache.get(fileId);
     }
 
     const me = await requireAuth();
@@ -357,6 +371,16 @@
     const userListEl  = document.getElementById("user-list");
     const headerEl    = document.getElementById("thread-title");
     const messagesEl  = document.getElementById("messages");
+
+    // Media bubbles download only when they scroll near the viewport —
+    // opening a chat must not pull every photo/video in its history.
+    const mediaObserver = new IntersectionObserver((entries) => {
+      for (const en of entries) {
+        if (!en.isIntersecting) continue;
+        mediaObserver.unobserve(en.target);
+        en.target._loadMedia?.();
+      }
+    }, { root: messagesEl, rootMargin: "600px 0px" });
 
     function leaveActiveConversation() {
       chatEl.dataset.view = "sidebar";
@@ -520,7 +544,7 @@
       if (hasImage) {
         const frame = document.createElement("div");
         frame.className = "bubble-image-frame";
-        const attachMedia = (url, type) => {
+        const buildMedia = (url, type) => {
           if (type && type.startsWith("video/")) {
             const v = document.createElement("video");
             v.className = "bubble-image";
@@ -528,33 +552,69 @@
             v.controls = true;
             v.playsInline = true;
             v.preload = "metadata";
-            frame.appendChild(v);
-          } else {
-            const img = document.createElement("img");
-            img.className = "bubble-image";
-            img.alt = "Photo";
-            img.loading = "lazy";
-            img.src = url;
-            if (msg.imageId) {
-              img.addEventListener("click", (e) => {
-                e.stopPropagation();
-                openLightbox(msg.imageId);
-              });
-            }
-            frame.appendChild(img);
+            return v;
           }
+          const img = document.createElement("img");
+          img.className = "bubble-image";
+          img.alt = "Photo";
+          img.loading = "lazy";
+          img.src = url;
+          if (msg.imageId) {
+            img.addEventListener("click", (e) => {
+              e.stopPropagation();
+              openLightbox(msg.imageId);
+            });
+          }
+          return img;
+        };
+        const showFail = () => {
+          frame.innerHTML = "";
+          const fail = document.createElement("span");
+          fail.className = "bubble-text";
+          fail.textContent = "Media unavailable";
+          frame.appendChild(fail);
         };
         if (msg._localImageUrl) {
-          attachMedia(msg._localImageUrl, msg._localMime || "image/jpeg");
+          frame.appendChild(buildMedia(msg._localImageUrl, msg._localMime || "image/jpeg"));
         } else {
-          bubbleMediaUrl(msg.imageId)
-            .then(({ url, type }) => attachMedia(url, type))
-            .catch(() => {
-              const fail = document.createElement("span");
-              fail.className = "bubble-text";
-              fail.textContent = "Media unavailable";
-              frame.appendChild(fail);
-            });
+          // Lazy: nothing downloads until the bubble scrolls near the
+          // viewport. Then a HEAD request decides the kind — images load
+          // right away, videos wait for an explicit tap (full-file download).
+          const fileId = msg.imageId;
+          frame._loadMedia = async () => {
+            try {
+              const kind = await mediaKind(fileId);
+              if (kind.startsWith("video/")) {
+                const ph = document.createElement("button");
+                ph.type = "button";
+                ph.className = "bubble-image video-placeholder";
+                ph.setAttribute("aria-label", "Play video");
+                ph.innerHTML = `<svg viewBox="0 0 24 24" width="44" height="44" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="rgba(255,255,255,0.25)"/><path d="M10 8l6 4-6 4z" fill="#fff"/></svg>`;
+                ph.addEventListener("click", async (e) => {
+                  e.stopPropagation();
+                  ph.disabled = true;
+                  ph.classList.add("loading");
+                  try {
+                    const { url, type } = await bubbleMediaUrl(fileId);
+                    const v = buildMedia(url, type || "video/mp4");
+                    ph.replaceWith(v);
+                    v.play?.().catch(() => {});
+                  } catch {
+                    ph.disabled = false;
+                    ph.classList.remove("loading");
+                    showToast("Video failed to load");
+                  }
+                });
+                frame.appendChild(ph);
+              } else {
+                const { url, type } = await bubbleMediaUrl(fileId);
+                frame.appendChild(buildMedia(url, type));
+              }
+            } catch {
+              showFail();
+            }
+          };
+          mediaObserver.observe(frame);
         }
         bubble.appendChild(frame);
       }
@@ -1268,6 +1328,7 @@
       updateCallPill();
 
       messagesEl.innerHTML = "";
+      mediaObserver.disconnect(); // drop observers from the previous chat
       renderedIds.clear();
       bubbleMap.clear();
       messageMap.clear();
