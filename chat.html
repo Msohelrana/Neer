@@ -175,6 +175,26 @@
     <img id="lightbox-img" alt="Photo" />
   </div>
 
+  <div class="camera-overlay hidden" id="camera-overlay" role="dialog" aria-modal="true" aria-label="Camera">
+    <video id="camera-video" autoplay playsinline muted></video>
+    <img id="camera-preview" class="hidden" alt="Photo preview" />
+    <button type="button" class="lightbox-btn camera-close" id="camera-close" aria-label="Close camera">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M18.3 5.71 12 12.01l-6.3-6.3-1.41 1.41 6.3 6.3-6.3 6.3 1.41 1.41 6.3-6.3 6.3 6.3 1.41-1.41-6.3-6.3 6.3-6.3z" fill="currentColor"/></svg>
+    </button>
+    <div class="camera-controls">
+      <button type="button" class="camera-side-btn" id="camera-flip" aria-label="Flip camera">
+        <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M12 5V2L8 6l4 4V7c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 13c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 8.74A7.93 7.93 0 0 0 4 13c0 4.42 3.58 8 8 8v3l4-4-4-4v3z" fill="currentColor"/></svg>
+      </button>
+      <button type="button" class="camera-shutter" id="camera-shutter" aria-label="Take photo"></button>
+      <button type="button" class="camera-side-btn hidden" id="camera-retake" aria-label="Retake photo">
+        <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" fill="currentColor"/></svg>
+      </button>
+      <button type="button" class="camera-send hidden" id="camera-send" aria-label="Send photo">
+        <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </div>
+
   <div class="call-overlay hidden" id="call-overlay" role="dialog" aria-modal="true" aria-label="Voice call">
     <div class="call-screen">
       <button type="button" class="call-minimize" id="call-minimize" aria-label="Back to chat">
@@ -2131,9 +2151,106 @@
     document.getElementById("camera-btn").addEventListener("click", () => {
       if (!activeConversation) return;
       if (isOffline()) { showToast("Connect to send photos"); return; }
-      cameraInput.value = "";
-      cameraInput.click();
+      openCamera();
     });
+
+    // ----- In-app camera (Messenger-style) -----
+    const camOverlay   = document.getElementById("camera-overlay");
+    const camVideo     = document.getElementById("camera-video");
+    const camPreview   = document.getElementById("camera-preview");
+    const camShutter   = document.getElementById("camera-shutter");
+    const camFlipBtn   = document.getElementById("camera-flip");
+    const camRetakeBtn = document.getElementById("camera-retake");
+    const camSendBtn   = document.getElementById("camera-send");
+    let camStream = null;
+    let camFacing = "environment";
+    let camBlob   = null;
+
+    async function startCameraStream() {
+      camStream?.getTracks().forEach((t) => t.stop());
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: camFacing },
+        audio: false,
+      });
+      camVideo.srcObject = camStream;
+      // Mirror the live preview for the front camera, like every camera app.
+      camVideo.classList.toggle("mirrored", camFacing === "user");
+    }
+
+    async function openCamera() {
+      try {
+        await startCameraStream();
+      } catch {
+        // No camera / permission denied — fall back to the native capture input.
+        cameraInput.value = "";
+        cameraInput.click();
+        return;
+      }
+      resetCameraUI();
+      camOverlay.classList.remove("hidden");
+    }
+
+    function resetCameraUI() {
+      if (camPreview.src) { URL.revokeObjectURL(camPreview.src); camPreview.removeAttribute("src"); }
+      camBlob = null;
+      camPreview.classList.add("hidden");
+      camVideo.classList.remove("hidden");
+      camShutter.classList.remove("hidden");
+      camFlipBtn.classList.remove("hidden");
+      camRetakeBtn.classList.add("hidden");
+      camSendBtn.classList.add("hidden");
+    }
+
+    function closeCamera() {
+      camStream?.getTracks().forEach((t) => t.stop());
+      camStream = null;
+      camVideo.srcObject = null;
+      resetCameraUI();
+      camOverlay.classList.add("hidden");
+    }
+
+    camShutter.addEventListener("click", () => {
+      if (!camVideo.videoWidth) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = camVideo.videoWidth;
+      canvas.height = camVideo.videoHeight;
+      const ctx = canvas.getContext("2d");
+      if (camFacing === "user") {
+        // Capture what the mirrored preview showed.
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(camVideo, 0, 0);
+      canvas.toBlob((blob) => {
+        if (!blob) { showToast("Couldn't take the photo"); return; }
+        camBlob = blob;
+        camPreview.src = URL.createObjectURL(blob);
+        camPreview.classList.remove("hidden");
+        camVideo.classList.add("hidden");
+        camShutter.classList.add("hidden");
+        camFlipBtn.classList.add("hidden");
+        camRetakeBtn.classList.remove("hidden");
+        camSendBtn.classList.remove("hidden");
+      }, "image/jpeg", 0.92);
+    });
+
+    camRetakeBtn.addEventListener("click", resetCameraUI); // stream kept alive
+    camSendBtn.addEventListener("click", () => {
+      if (!camBlob) return;
+      const file = new File([camBlob], "camera.jpg", { type: "image/jpeg" });
+      closeCamera();
+      sendPhotos([file]);
+    });
+    camFlipBtn.addEventListener("click", async () => {
+      camFacing = camFacing === "user" ? "environment" : "user";
+      try {
+        await startCameraStream();
+      } catch {
+        camFacing = camFacing === "user" ? "environment" : "user";
+        showToast("Couldn't switch camera");
+      }
+    });
+    document.getElementById("camera-close").addEventListener("click", closeCamera);
     galleryInput.addEventListener("change", (e) => sendPhotos(e.target.files));
     cameraInput.addEventListener("change", (e) => sendPhotos(e.target.files));
 
