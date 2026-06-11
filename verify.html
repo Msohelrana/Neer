@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Verify email · Neer</title>
+  <meta name="theme-color" content="#0e1116" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="css/style.css" />
+  <style>
+    .verify-actions { display: flex; flex-direction: column; gap: 12px; margin-top: 18px; }
+    .verify-actions .primary {
+      padding: 12px;
+      background: var(--accent-grad);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-weight: 600;
+      box-shadow: var(--shadow-glow);
+    }
+    .verify-actions .ghost {
+      padding: 12px;
+      background: transparent;
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
+      color: var(--muted);
+    }
+    .verify-actions .ghost:hover { color: var(--text); }
+  </style>
+  <script type="module">
+    import { applyTheme } from "./js/theme.js";
+    import "./js/pwa.js";
+    applyTheme();
+  </script>
+</head>
+<body>
+  <main class="auth">
+    <h1>Neer</h1>
+    <p class="auth-tagline">Email verification</p>
+    <p id="msg" class="msg">Checking…</p>
+    <div class="verify-actions hidden" id="actions">
+      <button type="button" class="primary" id="continue">I've verified — continue</button>
+      <button type="button" class="ghost" id="resend">Resend verification email</button>
+      <button type="button" class="ghost" id="logout">Log out</button>
+    </div>
+    <form class="form hidden" id="revert-form" style="margin-top: 18px;">
+      <p class="msg" id="revert-label" style="margin: 0;"></p>
+      <input type="password" name="password" placeholder="Current password" required autocomplete="current-password" />
+      <button type="submit">Cancel change — keep previous email</button>
+    </form>
+  </main>
+
+  <script type="module">
+    import { getCurrentUser, sendVerificationEmail, confirmVerification, logout, updateEmail } from "./js/auth.js";
+    import { updateProfileEmail } from "./js/users.js";
+
+    const msgEl = document.getElementById("msg");
+    const actions = document.getElementById("actions");
+    const resendBtn = document.getElementById("resend");
+    const revertForm = document.getElementById("revert-form");
+
+    function show(text, isError = false) {
+      msgEl.textContent = text;
+      msgEl.classList.toggle("error", isError);
+    }
+
+    const params = new URLSearchParams(location.search);
+    const userId = params.get("userId");
+    const secret = params.get("secret");
+
+    if (userId && secret) {
+      // Arrived from the emailed link — confirm it.
+      show("Verifying your email…");
+      try {
+        await confirmVerification(userId, secret);
+        // The change is now committed — drop the cancel-change escape hatch.
+        try { localStorage.removeItem(`neer:prevEmail:${userId}`); } catch {}
+        show("Email verified! Taking you to your chats…");
+        setTimeout(() => location.replace("./chat.html"), 1200);
+      } catch (err) {
+        show("Verification failed — the link may have expired. Log in and resend the email.", true);
+        actions.classList.remove("hidden");
+      }
+    } else {
+      // Waiting room for a signed-in but unverified user.
+      const me = await getCurrentUser();
+      if (!me) {
+        location.replace("./login.html");
+      } else if (me.emailVerification) {
+        location.replace("./chat.html");
+      } else {
+        show(`We sent a verification link to ${me.email}. Open it, then come back.`);
+        actions.classList.remove("hidden");
+        // Pending email change: offer to revert to the previous address.
+        const prevKey = `neer:prevEmail:${me.$id}`;
+        const prevEmail = localStorage.getItem(prevKey);
+        if (prevEmail && prevEmail !== me.email) {
+          document.getElementById("revert-label").textContent =
+            `Didn't mean to switch? Go back to ${prevEmail}:`;
+          revertForm.classList.remove("hidden");
+          revertForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            try {
+              await updateEmail(prevEmail, revertForm.elements.password.value);
+              await updateProfileEmail(me.$id, prevEmail).catch(() => {});
+              localStorage.removeItem(prevKey);
+              try { await sendVerificationEmail(); } catch {}
+              revertForm.classList.add("hidden");
+              show(`Change cancelled — you're back on ${prevEmail}. We sent it a fresh verification link.`);
+            } catch (err) {
+              show("Couldn't cancel the change: " + (err?.message || err), true);
+            }
+          });
+        }
+      }
+    }
+
+    document.getElementById("continue").addEventListener("click", async () => {
+      const me = await getCurrentUser();
+      if (me?.emailVerification) location.replace("./chat.html");
+      else show("Not verified yet — tap the link in the email first.", true);
+    });
+
+    let cooldown = false;
+    resendBtn.addEventListener("click", async () => {
+      if (cooldown) return;
+      try {
+        await sendVerificationEmail();
+        show("Verification email sent — check your inbox (and spam).");
+        cooldown = true;
+        resendBtn.disabled = true;
+        setTimeout(() => { cooldown = false; resendBtn.disabled = false; }, 60000);
+      } catch (err) {
+        show("Couldn't send the email: " + (err?.message || err), true);
+      }
+    });
+
+    document.getElementById("logout").addEventListener("click", async () => {
+      await logout();
+      location.replace("./login.html");
+    });
+  </script>
+</body>
+</html>

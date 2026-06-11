@@ -1051,6 +1051,18 @@ a:hover {
   color: var(--muted);
 }
 
+/* Current email + the change-email warning in settings */
+.settings-email {
+  margin: 0 0 10px;
+  font-weight: 600;
+  word-break: break-all;
+}
+.settings-email-note {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 .modal-section p {
   margin: 0 0 12px;
   color: var(--muted);

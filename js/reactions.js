@@ -22,14 +22,15 @@ export async function loadReactions(conversationId) {
   }
 }
 
-export async function createReaction(conversationId, messageId, userId, emoji) {
+export async function createReaction(conversationId, messageId, userId, otherId, emoji) {
   return databases.createDocument(
     DB_ID,
     COL_REACTIONS,
     ID.unique(),
     { conversationId, messageId, userId, emoji },
     [
-      Permission.read(Role.users()),
+      Permission.read(Role.user(userId)),
+      Permission.read(Role.user(otherId)),
       Permission.update(Role.user(userId)),
       Permission.delete(Role.user(userId)),
     ]

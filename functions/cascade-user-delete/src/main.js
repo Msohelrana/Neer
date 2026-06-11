@@ -21,6 +21,13 @@ export default async ({ req, res, log, error }) => {
 
   const db = new Databases(client);
 
+  // Only the users.*.delete Auth event may trigger the cascade — a direct
+  // HTTP execution could otherwise wipe any user's data by posting their id.
+  if (req.headers["x-appwrite-trigger"] !== "event") {
+    error("Rejected non-event execution");
+    return res.json({ ok: false, error: "event-triggered only" }, 403);
+  }
+
   let payload;
   try { payload = req.bodyJson ?? JSON.parse(req.body || "{}"); }
   catch { payload = {}; }

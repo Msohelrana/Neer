@@ -66,6 +66,10 @@ export async function updateProfileName(userId, name) {
   return databases.updateDocument(DB_ID, COL_USERS, userId, { name });
 }
 
+export async function updateProfileEmail(userId, email) {
+  return databases.updateDocument(DB_ID, COL_USERS, userId, { email });
+}
+
 /**
  * Bump my own `lastActiveAt` so other clients can render an "online" dot.
  * Designed to be cheap: callers throttle to ~once a minute.

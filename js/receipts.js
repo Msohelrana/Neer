@@ -24,14 +24,16 @@ export async function loadReceipts(conversationId) {
   }
 }
 
-export async function createReceipt(conversationId, userId, lastSeenAt) {
+export async function createReceipt(conversationId, userId, otherId, lastSeenAt) {
   return databases.createDocument(
     DB_ID,
     COL_RECEIPTS,
     ID.unique(),
     { conversationId, userId, lastSeenAt },
     [
-      Permission.read(Role.users()),
+      // The other participant reads this to flip Sent → Seen.
+      Permission.read(Role.user(userId)),
+      Permission.read(Role.user(otherId)),
       Permission.update(Role.user(userId)),
       Permission.delete(Role.user(userId)),
     ]

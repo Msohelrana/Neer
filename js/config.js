@@ -14,6 +14,18 @@ export const COL_RECEIPTS = "receipts";
 export const COL_PUSH_SUBS = "pushSubscriptions";
 export const COL_SIGNALING = "signaling";
 
+// Admin approval gate. Console setup:
+//  1. Auth → Teams → create a team named exactly "admins"; add yourself.
+//  2. Databases → create collection "approvals" with attributes:
+//     userId (string, 64, required) and email (string, 320, required),
+//     plus an index on userId. Approval is bound to the email — changing
+//     the account email forces a fresh admin approval.
+//  3. Collection Settings → Permissions (document security OFF):
+//     Role "Users" → Read;  Role "Team: admins" → Create, Read, Update, Delete.
+// Only team members can create approval docs, so users can't approve themselves.
+export const COL_APPROVALS = "approvals";
+export const ADMIN_TEAM_NAME = "admins";
+
 // Storage bucket for message-attached images. Create this in the Appwrite
 // console: Storage → New bucket. Permissions: Create=Users, Read=Users.
 // Allowed file extensions: jpg, jpeg, png, webp, gif. Max size 5 MB.

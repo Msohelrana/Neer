@@ -3,6 +3,7 @@ import {
   Account,
   Databases,
   Storage,
+  Teams,
   Query,
   ID,
   Permission,
@@ -18,5 +19,6 @@ export const client = new Client()
 export const account = new Account(client);
 export const databases = new Databases(client);
 export const storage = new Storage(client);
+export const teams = new Teams(client);
 
 export { Query, ID, Permission, Role };

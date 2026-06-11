@@ -16,9 +16,13 @@ export async function sendSignal(callId, from, to, type, payload) {
       payload: JSON.stringify(payload ?? {}),
     },
     [
-      Permission.read(Role.users()),
-      Permission.update(Role.users()),
-      Permission.delete(Role.users()),
+      // Caller + callee only; both may prune the call's signal docs.
+      Permission.read(Role.user(from)),
+      Permission.read(Role.user(to)),
+      Permission.update(Role.user(from)),
+      Permission.update(Role.user(to)),
+      Permission.delete(Role.user(from)),
+      Permission.delete(Role.user(to)),
     ]
   );
 }

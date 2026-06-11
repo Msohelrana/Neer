@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Admin · Neer</title>
+  <meta name="theme-color" content="#0e1116" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="css/style.css" />
+  <style>
+    .admin-list { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+    .admin-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    .admin-row .who { flex: 1; min-width: 0; }
+    .admin-row .who .name { display: block; font-weight: 600; }
+    .admin-row .who .email {
+      display: block;
+      color: var(--muted);
+      font-size: 0.82rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .admin-row button {
+      padding: 8px 14px;
+      border: none;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 0.82rem;
+    }
+    .admin-row .approve { background: var(--accent-grad); color: #fff; }
+    .admin-row .revoke  { background: transparent; border: 1px solid var(--border-strong); color: var(--muted); }
+    .admin-row .revoke:hover { color: var(--danger); border-color: var(--danger); }
+    .admin-back { display: inline-block; margin-top: 16px; color: var(--accent); }
+  </style>
+  <script type="module">
+    import { applyTheme } from "./js/theme.js";
+    applyTheme();
+  </script>
+</head>
+<body>
+  <main class="auth">
+    <h1>Neer</h1>
+    <p class="auth-tagline">Admin — account approval</p>
+    <p id="msg" class="msg">Loading…</p>
+    <div class="admin-list" id="list"></div>
+    <a class="admin-back" href="./chat.html">← Back to chats</a>
+  </main>
+
+  <script type="module">
+    import { requireAuth } from "./js/auth.js";
+    import { listOtherUsers } from "./js/users.js";
+    import { isAdmin, listApprovals, approveUser, revokeApproval } from "./js/approval.js";
+
+    const msgEl = document.getElementById("msg");
+    const listEl = document.getElementById("list");
+
+    const me = await requireAuth();
+    if (!(await isAdmin())) {
+      msgEl.textContent = "This page is for admins only.";
+      msgEl.classList.add("error");
+      throw new Error("not_admin");
+    }
+
+    async function paint() {
+      msgEl.textContent = "Loading…";
+      msgEl.classList.remove("error");
+      try {
+        const [users, approvals] = await Promise.all([listOtherUsers(me.$id), listApprovals()]);
+        const approvalByUser = new Map(approvals.map((a) => [a.userId, a]));
+        listEl.innerHTML = "";
+        users.forEach((u) => {
+          const row = document.createElement("div");
+          row.className = "admin-row";
+          const who = document.createElement("div");
+          who.className = "who";
+          const name = document.createElement("span");
+          name.className = "name";
+          name.textContent = u.name || "(no name)";
+          const email = document.createElement("span");
+          email.className = "email";
+          email.textContent = u.email || u.$id;
+          who.append(name, email);
+          const approval = approvalByUser.get(u.$id);
+          // Approval is bound to the email — a changed address shows as
+          // "Re-approve" until the admin re-binds it.
+          const stale = approval && approval.email !== u.email;
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = approval && !stale ? "revoke" : "approve";
+          btn.textContent = approval ? (stale ? "Re-approve" : "Revoke") : "Approve";
+          btn.addEventListener("click", async () => {
+            btn.disabled = true;
+            try {
+              if (approval) await revokeApproval(approval.$id);
+              if (!approval || stale) await approveUser(u.$id, u.email);
+              await paint();
+            } catch (err) {
+              msgEl.textContent = "Action failed: " + (err?.message || err);
+              msgEl.classList.add("error");
+              btn.disabled = false;
+            }
+          });
+          row.append(who, btn);
+          listEl.appendChild(row);
+        });
+        const pending = users.filter((u) => !approvalByUser.has(u.$id)).length;
+        msgEl.textContent = users.length
+          ? `${users.length - pending} approved · ${pending} pending`
+          : "No other users yet.";
+      } catch (err) {
+        msgEl.textContent = "Load failed: " + (err?.message || err);
+        msgEl.classList.add("error");
+      }
+    }
+
+    await paint();
+  </script>
+</body>
+</html>

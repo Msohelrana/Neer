@@ -31,7 +31,10 @@ export async function getOrCreateConversation(meId, otherId) {
       participants: [meId, otherId],
     },
     [
-      Permission.read(Role.users()),
+      // Only the two participants — Role.users() would let any signed-in
+      // account read other people's conversations.
+      Permission.read(Role.user(meId)),
+      Permission.read(Role.user(otherId)),
       Permission.update(Role.user(meId)),
       Permission.delete(Role.user(meId)),
     ]
@@ -75,7 +78,8 @@ export async function sendMessage(conversation, meId, text, reply, imageId) {
     ID.unique(),
     data,
     [
-      Permission.read(Role.users()),
+      Permission.read(Role.user(meId)),
+      Permission.read(Role.user(otherId)),
       Permission.update(Role.user(meId)),
       Permission.delete(Role.user(meId)),
     ]

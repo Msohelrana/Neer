@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Pending approval · Neer</title>
+  <meta name="theme-color" content="#0e1116" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="css/style.css" />
+  <style>
+    .verify-actions { display: flex; flex-direction: column; gap: 12px; margin-top: 18px; }
+    .verify-actions .primary {
+      padding: 12px;
+      background: var(--accent-grad);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-weight: 600;
+      box-shadow: var(--shadow-glow);
+    }
+    .verify-actions .ghost {
+      padding: 12px;
+      background: transparent;
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
+      color: var(--muted);
+    }
+    .verify-actions .ghost:hover { color: var(--text); }
+  </style>
+  <script type="module">
+    import { applyTheme } from "./js/theme.js";
+    import "./js/pwa.js";
+    applyTheme();
+  </script>
+</head>
+<body>
+  <main class="auth">
+    <h1>Neer</h1>
+    <p class="auth-tagline">Account approval</p>
+    <p id="msg" class="msg">Checking…</p>
+    <div class="verify-actions hidden" id="actions">
+      <button type="button" class="primary" id="check">Check again</button>
+      <button type="button" class="ghost" id="logout">Log out</button>
+    </div>
+  </main>
+
+  <script type="module">
+    import { getCurrentUser, logout } from "./js/auth.js";
+    import { isApproved } from "./js/approval.js";
+
+    const msgEl = document.getElementById("msg");
+    const actions = document.getElementById("actions");
+
+    function show(text, isError = false) {
+      msgEl.textContent = text;
+      msgEl.classList.toggle("error", isError);
+    }
+
+    const me = await getCurrentUser();
+    if (!me) {
+      location.replace("./login.html");
+    } else if (!me.emailVerification) {
+      location.replace("./verify.html");
+    } else if (await isApproved(me.$id, me.email)) {
+      location.replace("./chat.html");
+    } else {
+      show("Your email is verified — an admin now needs to approve your account. You'll get in as soon as that happens.");
+      actions.classList.remove("hidden");
+    }
+
+    document.getElementById("check").addEventListener("click", async () => {
+      if (await isApproved(me.$id, me.email)) location.replace("./chat.html");
+      else show("Not approved yet — check back in a while.", true);
+    });
+
+    document.getElementById("logout").addEventListener("click", async () => {
+      await logout();
+      location.replace("./login.html");
+    });
+  </script>
+</body>
+</html>

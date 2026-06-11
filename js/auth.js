@@ -72,10 +72,31 @@ export async function requireAuth() {
   }
 }
 
+// ----- Email verification -----
+// Sends the verification mail; the link lands on verify.html with
+// userId+secret query params. Requires an active session.
+export async function sendVerificationEmail() {
+  const url = new URL("verify.html", location.href).href;
+  return account.createVerification(url);
+}
+
+// Called from verify.html with the params from the emailed link.
+export async function confirmVerification(userId, secret) {
+  return account.updateVerification(userId, secret);
+}
+
 export async function updateName(newName) {
   return account.updateName(newName);
 }
 
 export async function updatePassword(currentPassword, newPassword) {
   return account.updatePassword(newPassword, currentPassword);
+}
+
+// Changing the email un-verifies the account in Appwrite, so the caller must
+// restart the verification (and admin approval) flow.
+export async function updateEmail(newEmail, password) {
+  const user = await account.updateEmail(newEmail, password);
+  cacheMe(user);
+  return user;
 }

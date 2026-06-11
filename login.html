@@ -42,10 +42,11 @@
   </main>
 
   <script type="module">
-    import { login, register, getCurrentUser } from "./js/auth.js";
+    import { login, register, getCurrentUser, sendVerificationEmail } from "./js/auth.js";
     import { ensureProfile } from "./js/users.js";
 
-    if (await getCurrentUser()) location.replace("./chat.html");
+    const existing = await getCurrentUser();
+    if (existing) location.replace(existing.emailVerification ? "./chat.html" : "./verify.html");
 
     const tabs = document.querySelectorAll(".tab");
     const loginForm = document.getElementById("login-form");
@@ -69,8 +70,8 @@
       e.preventDefault();
       const data = new FormData(loginForm);
       try {
-        await login(data.get("email"), data.get("password"));
-        location.replace("./chat.html");
+        const user = await login(data.get("email"), data.get("password"));
+        location.replace(user.emailVerification ? "./chat.html" : "./verify.html");
       } catch (err) {
         show(err.message);
       }
@@ -82,7 +83,8 @@
       try {
         const user = await register(data.get("email"), data.get("password"), data.get("name"));
         await ensureProfile(user);
-        location.replace("./chat.html");
+        try { await sendVerificationEmail(); } catch {}
+        location.replace("./verify.html");
       } catch (err) {
         show(err.message);
       }

@@ -130,6 +130,17 @@
       </section>
 
       <section class="modal-section">
+        <h3>Email</h3>
+        <p class="settings-email" id="me-email"></p>
+        <form id="email-form">
+          <input name="newEmail" type="email" required placeholder="New email" autocomplete="email" />
+          <input name="password" type="password" required placeholder="Current password" autocomplete="current-password" />
+          <button type="submit">Change email</button>
+        </form>
+        <p class="settings-email-note">Changing your email requires verifying the new address and a fresh admin approval. If you don't verify it, you can cancel the change from the verification screen.</p>
+      </section>
+
+      <section class="modal-section">
         <h3>Password</h3>
         <form id="password-form">
           <input name="current" type="password" required placeholder="Current password" autocomplete="current-password" />
@@ -141,6 +152,11 @@
       <section class="modal-section">
         <h3>Notifications</h3>
         <button type="button" id="notify-btn" class="modal-secondary-btn">Enable notifications</button>
+      </section>
+
+      <section class="modal-section hidden" id="admin-section">
+        <h3>Admin</h3>
+        <button type="button" id="admin-btn" class="modal-secondary-btn">Approve accounts</button>
       </section>
 
       <section class="modal-section">
@@ -217,11 +233,14 @@
       logout,
       updateName,
       updatePassword,
+      updateEmail,
+      sendVerificationEmail,
     } from "./js/auth.js";
     import {
       ensureProfile,
       listOtherUsers,
       updateProfileName,
+      updateProfileEmail,
       subscribeUsers,
       heartbeat,
     } from "./js/users.js";
@@ -288,6 +307,7 @@
       imageViewBlobUrl,
       mediaContentType,
     } from "./js/photos.js";
+    import { isApproved, isAdmin } from "./js/approval.js";
 
     // <img>/<video> can't send the Appwrite session cookie cross-origin
     // (401 → broken media), so files are fetched once with credentials and
@@ -321,6 +341,18 @@
     }
 
     const me = await requireAuth();
+    // Unverified accounts wait at the verify screen (skip when offline —
+    // the cached user can't re-verify without a network anyway).
+    if (me.emailVerification === false && navigator.onLine !== false) {
+      location.replace("./verify.html");
+      throw new Error("email_not_verified");
+    }
+    // Verified accounts also need an admin's approval (admins skip the gate).
+    if (navigator.onLine !== false &&
+        !(await isApproved(me.$id, me.email)) && !(await isAdmin())) {
+      location.replace("./approval.html");
+      throw new Error("not_approved");
+    }
     await ensureProfile(me);
 
     // ----- Offline state -----
@@ -926,19 +958,22 @@
     // ----- Read receipts (sent / delivered / seen) -----
     async function upsertMyReceipt(convId, timestamp) {
       if (!timestamp) return;
+      // The other participant must be able to read my receipt (Seen flips).
+      const otherId = activeConversation?.participants?.find((p) => p !== me.$id);
+      if (!otherId) return;
       const cachedId = getMyReceiptId(me.$id, convId);
       try {
         if (cachedId) {
           await updateReceipt(cachedId, timestamp);
           return;
         }
-        const created = await createReceipt(convId, me.$id, timestamp);
+        const created = await createReceipt(convId, me.$id, otherId, timestamp);
         saveMyReceiptId(me.$id, convId, created.$id);
       } catch (err) {
         // 404 → cached id is stale; recreate.
         if (err?.code === 404) {
           try {
-            const created = await createReceipt(convId, me.$id, timestamp);
+            const created = await createReceipt(convId, me.$id, otherId, timestamp);
             saveMyReceiptId(me.$id, convId, created.$id);
           } catch (e) { console.warn("Receipt recreate failed:", e?.message); }
         } else {
@@ -1003,7 +1038,7 @@
         });
         paintReactions(messageId);
         try {
-          const created = await createReaction(convId, messageId, me.$id, emoji);
+          const created = await createReaction(convId, messageId, me.$id, activeOther.$id, emoji);
           ingestReaction(created);
           paintReactions(messageId);
         } catch (err) {
@@ -2618,6 +2653,7 @@
 
       const conv = activeConversation;
       const convId = conv.$id;
+      const otherId = activeOther.$id; // captured — chat may switch mid-upload
       // Paint every bubble up-front so the whole batch shows instantly;
       // the caption rides on the first photo only.
       const jobs = files.map((file, i) => {
@@ -2642,7 +2678,7 @@
       // Upload one at a time so the messages land in the order they were picked.
       for (const job of jobs) {
         try {
-          const fileDoc = await uploadMessageMedia(job.file, me.$id);
+          const fileDoc = await uploadMessageMedia(job.file, me.$id, otherId);
           const sent = await sendMessage(conv, me.$id, job.text, null, fileDoc.$id);
           applyMessageDelete(job.tempId);
           appendCachedMessage(me.$id, convId, sent);
@@ -2685,6 +2721,14 @@
         b.classList.toggle("active", b.dataset.theme === current);
       });
     }
+
+    // Admins get a shortcut to the approval panel in settings.
+    isAdmin().then((ok) => {
+      if (ok) document.getElementById("admin-section").classList.remove("hidden");
+    }).catch(() => {});
+    document.getElementById("admin-btn").addEventListener("click", () => {
+      location.href = "./admin.html";
+    });
 
     const notifyBtn = document.getElementById("notify-btn");
     function refreshNotifyBtn() {
@@ -2747,6 +2791,8 @@
 
     function openSettings() {
       nameForm.elements.name.value = me.name || "";
+      document.getElementById("me-email").textContent = me.email || "";
+      document.getElementById("email-form").reset();
       passwordForm.reset();
       showSettingsMsg("");
       syncThemeButtons();
@@ -2811,6 +2857,31 @@
         await updatePassword(current, next);
         passwordForm.reset();
         showSettingsMsg("Password updated.");
+      } catch (err) {
+        showSettingsMsg(err.message, true);
+      }
+    });
+
+    // Email change: Appwrite un-verifies the account, and the approval doc no
+    // longer matches the new address — so both gates re-arm automatically.
+    document.getElementById("email-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const newEmail = form.elements.newEmail.value.trim();
+      const password = form.elements.password.value;
+      if (!newEmail || newEmail === me.email) return;
+      const sure = await dialogConfirm(
+        "Changing your email signs you out to re-verify the new address, and an admin must approve your account again. Continue?"
+      );
+      if (!sure) return;
+      try {
+        // Remember the old address so verify.html can offer to cancel the
+        // change if the new one never gets verified.
+        try { localStorage.setItem(`neer:prevEmail:${me.$id}`, me.email); } catch {}
+        await updateEmail(newEmail, password);
+        await updateProfileEmail(me.$id, newEmail).catch(() => {});
+        try { await sendVerificationEmail(); } catch {}
+        location.replace("./verify.html");
       } catch (err) {
         showSettingsMsg(err.message, true);
       }
