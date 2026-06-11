@@ -1834,12 +1834,25 @@
       }
       return _inAudio;
     }
+    // The caller's ringback belongs in the earpiece, like a real phone call.
+    // (The receiver's ring intentionally stays on the media speaker.)
+    async function routeRingToEarpiece(a) {
+      try {
+        if (!a.setSinkId) return;
+        const devs = await navigator.mediaDevices.enumerateDevices();
+        const ear = devs.find((d) => d.kind === "audiooutput" && /earpiece|receiver/.test(d.label.toLowerCase()));
+        if (ear) await a.setSinkId(ear.deviceId);
+        else await a.setSinkId("communications");
+      } catch {}
+    }
     function playOutgoingRing() {
       stopRing();
       const a = _outRing();
       a.volume = 0.5;
       a.currentTime = 0;
-      a.play().catch((e) => console.warn("Outgoing ring play failed:", e?.message));
+      routeRingToEarpiece(a).then(() => {
+        a.play().catch((e) => console.warn("Outgoing ring play failed:", e?.message));
+      });
     }
     function playIncomingRing() {
       stopRing();
