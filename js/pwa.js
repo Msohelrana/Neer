@@ -8,3 +8,9 @@ if ("serviceWorker" in navigator) {
       .catch((err) => console.warn("Service worker registration failed:", err));
   });
 }
+
+// Block pinch zoom on iOS, which ignores user-scalable=no in the viewport meta.
+document.addEventListener("gesturestart", (e) => e.preventDefault());
+document.addEventListener("touchmove", (e) => {
+  if (e.scale !== undefined && e.scale !== 1) e.preventDefault();
+}, { passive: false });

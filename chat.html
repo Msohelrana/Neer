@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Neer Chat</title>
   <meta name="theme-color" content="#0e1116" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -41,6 +41,10 @@
         <div id="thread-title" class="thread-title">
           <span class="placeholder">Select a user to start chatting</span>
         </div>
+        <button type="button" class="call-pill hidden" id="call-pill" aria-label="Return to call">
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.5.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.4 21 3 13.6 3 4c0-.6.4-1 1-1h3.4c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.5.1.4 0 .8-.2 1l-2.2 2.3z" fill="currentColor"/></svg>
+          <span id="call-pill-text">On call</span>
+        </button>
         <div class="thread-actions hidden" id="thread-actions">
           <button type="button" class="header-icon-btn" id="call-btn" aria-label="Voice call" title="Voice call">
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.5.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.4 21 3 13.6 3 4c0-.6.4-1 1-1h3.4c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.5.1.4 0 .8-.2 1l-2.2 2.3z" fill="currentColor"/></svg>
@@ -161,11 +165,21 @@
     <button type="button" class="lightbox-btn lightbox-save" id="lightbox-save" aria-label="Save image">
       <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor"/></svg>
     </button>
+    <button type="button" class="lightbox-btn lightbox-prev hidden" id="lightbox-prev" aria-label="Previous photo">
+      <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button type="button" class="lightbox-btn lightbox-next hidden" id="lightbox-next" aria-label="Next photo">
+      <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="lightbox-counter hidden" id="lightbox-counter"></div>
     <img id="lightbox-img" alt="Photo" />
   </div>
 
   <div class="call-overlay hidden" id="call-overlay" role="dialog" aria-modal="true" aria-label="Voice call">
     <div class="call-screen">
+      <button type="button" class="call-minimize" id="call-minimize" aria-label="Back to chat">
+        <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <div class="call-avatar avatar" id="call-avatar" aria-hidden="true"></div>
       <div class="call-name" id="call-name"></div>
       <div class="call-status" id="call-status">Calling…</div>
@@ -246,9 +260,29 @@
     } from "./js/outbox.js";
     import {
       uploadMessageImage,
-      imagePreviewUrl,
       imageViewUrl,
+      imagePreviewBlobUrl,
+      imageViewBlobUrl,
     } from "./js/photos.js";
+
+    // <img> can't send the Appwrite session cookie cross-origin (401 → broken
+    // icon), so previews are fetched once with credentials and served to the
+    // bubble as same-origin blob URLs, cached per file for re-renders.
+    const imageBlobCache = new Map();
+    function bubbleImageUrl(fileId) {
+      if (!imageBlobCache.has(fileId)) {
+        // Preview (server-side resize) 403s on Appwrite Cloud's free plan —
+        // fall back to the raw file, which uploads pre-compressed anyway.
+        const p = imagePreviewBlobUrl(fileId, 800)
+          .catch(() => imageViewBlobUrl(fileId))
+          .catch((err) => {
+            imageBlobCache.delete(fileId); // allow retry on next render
+            throw err;
+          });
+        imageBlobCache.set(fileId, p);
+      }
+      return imageBlobCache.get(fileId);
+    }
 
     const me = await requireAuth();
     await ensureProfile(me);
@@ -462,18 +496,27 @@
       const hasImage = !!(msg.imageId || msg._localImageUrl);
       bubble.classList.toggle("has-image", hasImage);
       if (hasImage) {
+        const frame = document.createElement("div");
+        frame.className = "bubble-image-frame";
         const img = document.createElement("img");
         img.className = "bubble-image";
         img.alt = "Photo";
         img.loading = "lazy";
-        img.src = msg._localImageUrl || imagePreviewUrl(msg.imageId, 800);
+        if (msg._localImageUrl) {
+          img.src = msg._localImageUrl;
+        } else {
+          bubbleImageUrl(msg.imageId)
+            .then((url) => { img.src = url; })
+            .catch(() => { img.alt = "Photo unavailable"; });
+        }
         if (msg.imageId) {
           img.addEventListener("click", (e) => {
             e.stopPropagation();
             openLightbox(msg.imageId);
           });
         }
-        bubble.appendChild(img);
+        frame.appendChild(img);
+        bubble.appendChild(frame);
       }
 
       if (msg.text) {
@@ -584,7 +627,50 @@
       wrap.dataset.id = msg.$id;
       paintBubbleContent(wrap, msg);
       if (!isCall && !isDeleted(msg)) bindBubbleLongPress(wrap, msg.$id);
-      messagesEl.appendChild(wrap);
+      // Messenger-style: 2+ consecutive caption-less photos from the same
+      // sender collapse into a .photo-run tile grid. The message's own
+      // (hidden) divider was just appended, so the previous message's element
+      // is the divider's left neighbour; grouped dividers are tucked before
+      // the run to keep the run as the container's last element.
+      const isPhotoOnly = !isCall && !isDeleted(msg) &&
+        (msg.imageId || msg._localImageUrl) && !msg.text;
+      const side = msg.senderId === me.$id ? "me" : "them";
+      const divider = dividerMap.get(msg.$id);
+      const prev = divider.previousElementSibling;
+      let grouped = false;
+      // Tapping a photo opens the lightbox, so its divider can't be
+      // tap-revealed — every photo (or run of photos) keeps one divider
+      // permanently visible. Pending temps stay hidden; the first confirmed
+      // message of a run reveals its divider and marks the run.
+      function showPhotoTime(run) {
+        if (msg._pending || run?.dataset.timeShown) return;
+        divider.classList.remove("hidden");
+        anchorIds.add(msg.$id);
+        if (run) run.dataset.timeShown = "1";
+      }
+      if (isPhotoOnly && !anchorIds.has(msg.$id)) {
+        if (prev?.classList.contains("photo-run") && prev.classList.contains(side)) {
+          prev.appendChild(wrap);
+          messagesEl.insertBefore(divider, prev);
+          grouped = true;
+          showPhotoTime(prev);
+        } else if (prev?.classList.contains("bubble") && prev.classList.contains(side) &&
+                   prev.classList.contains("has-image") && !prev.querySelector(".bubble-text")) {
+          const run = document.createElement("div");
+          run.className = "photo-run " + side;
+          messagesEl.insertBefore(run, prev);
+          run.append(prev, wrap);
+          messagesEl.insertBefore(divider, run);
+          grouped = true;
+          // The bubble we merged with may already show its own divider.
+          if (anchorIds.has(prev.dataset.id)) run.dataset.timeShown = "1";
+          else showPhotoTime(run);
+        }
+      }
+      if (!grouped) {
+        messagesEl.appendChild(wrap);
+        if (isPhotoOnly) showPhotoTime(null);
+      }
       bubbleMap.set(msg.$id, wrap);
       paintReactions(msg.$id);
       messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -619,7 +705,14 @@
       messageMap.delete(messageId);
       reactionsMap.delete(messageId);
       const bubble = bubbleMap.get(messageId);
-      if (bubble) bubble.remove();
+      if (bubble) {
+        const run = bubble.parentElement?.classList.contains("photo-run")
+          ? bubble.parentElement : null;
+        bubble.remove();
+        if (run && !run.children.length) run.remove();
+        // A run of one photo reverts to a normal standalone bubble.
+        else if (run && run.children.length === 1) run.replaceWith(run.firstElementChild);
+      }
       bubbleMap.delete(messageId);
       renderedIds.delete(messageId);
       const div = dividerMap.get(messageId);
@@ -743,7 +836,13 @@
       txt.className = "receipt-text";
       txt.textContent = status;
       ind.appendChild(txt);
-      lastMine.insertAdjacentElement("afterend", ind);
+      // If the bubble sits inside a photo-run grid, the indicator must go
+      // after the run — inside it, it would become a flex tile and shove the
+      // photos out of place.
+      const anchor = lastMine.parentElement?.classList.contains("photo-run")
+        ? lastMine.parentElement
+        : lastMine;
+      anchor.insertAdjacentElement("afterend", ind);
     }
 
     async function toggleReaction(messageId, emoji) {
@@ -1125,6 +1224,7 @@
       const cachedOther = (getCachedUserList(me.$id)?.users || []).find((x) => x.$id === other.$id);
       threadAvatar.classList.toggle("online", isOnline(cachedOther || other));
       document.getElementById("thread-actions").classList.remove("hidden");
+      updateCallPill();
 
       messagesEl.innerHTML = "";
       renderedIds.clear();
@@ -1742,10 +1842,31 @@
     const callNameEl   = document.getElementById("call-name");
     const callStatusEl = document.getElementById("call-status");
     const callCtrlsEl  = document.getElementById("call-controls");
+    const callPill     = document.getElementById("call-pill");
+    const callPillText = document.getElementById("call-pill-text");
+    const callMinBtn   = document.getElementById("call-minimize");
     let activeCall = null;
     let callTimer  = null;
     let muted = false;
-    let pendingIncoming = null; // { callId, cancel } while the receiver hasn't answered yet
+    let pendingIncoming = null; // { callId, other, cancel } while the receiver hasn't answered yet
+
+    // Header pill: visible only when a call involving the open chat's peer is
+    // running while the overlay is minimized. Click → back to the call screen.
+    function updateCallPill() {
+      const peer = activeCall?.other || pendingIncoming?.other;
+      const show = !!peer && callOverlay.classList.contains("hidden") &&
+                   activeOther && peer.$id === activeOther.$id;
+      callPill.classList.toggle("hidden", !show);
+      if (show) callPillText.textContent = callStatusEl.textContent;
+    }
+    callMinBtn.addEventListener("click", () => {
+      callOverlay.classList.add("hidden");
+      updateCallPill();
+    });
+    callPill.addEventListener("click", () => {
+      callOverlay.classList.remove("hidden");
+      updateCallPill();
+    });
 
     const CALL_ICON_END   = `<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .4-.23.74-.56.9-.98.48-1.87 1.1-2.66 1.85a.998.998 0 0 1-1.41 0L.29 13.08a.95.95 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48a.998.998 0 0 1-1.41 0c-.79-.74-1.69-1.36-2.67-1.85a1.01 1.01 0 0 1-.56-.9v-3.1A16.84 16.84 0 0 0 12 9z" fill="currentColor" transform="rotate(135 12 12)"/></svg>`;
     const CALL_ICON_ACCEPT= `<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.5.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.4 21 3 13.6 3 4c0-.6.4-1 1-1h3.4c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.5.1.4 0 .8-.2 1l-2.2 2.3z" fill="currentColor"/></svg>`;
@@ -1771,12 +1892,14 @@
       callCtrlsEl.innerHTML = "";
       controls.forEach((c) => callCtrlsEl.appendChild(c));
       callOverlay.classList.remove("hidden");
+      updateCallPill();
     }
 
     function hideCallUI() {
       callOverlay.classList.add("hidden");
       callAvatarEl.classList.remove("ringing");
       if (callTimer) { clearInterval(callTimer); callTimer = null; }
+      updateCallPill();
     }
 
     function startCallTimer() {
@@ -1787,6 +1910,7 @@
         const mm = String(Math.floor(s / 60)).padStart(2, "0");
         const ss = String(s % 60).padStart(2, "0");
         callStatusEl.textContent = `${mm}:${ss}`;
+        callPillText.textContent = `${mm}:${ss}`;
       }, 1000);
     }
 
@@ -1898,7 +2022,7 @@
         hideCallUI();
         pendingIncoming = null;
       }
-      pendingIncoming = { callId, cancel: cancelPendingIncoming };
+      pendingIncoming = { callId, other, cancel: cancelPendingIncoming };
 
       // Reuse the full-screen call overlay for the incoming ring screen, with
       // real Accept (green phone) + Decline (red rotated phone) icon buttons.
@@ -1912,6 +2036,9 @@
         const call = new Call(me, other, callId, "in");
         activeCall = call;
         wireCall(call, other);
+        // Keep the call screen up for the receiver — cancelPendingIncoming()
+        // hid the overlay and "accepted" only repaints its contents.
+        showCallUI(other, "Connecting…", []);
         try {
           await call.acceptIncoming(offer);
         } catch (err) {
@@ -1984,6 +2111,7 @@
     const galleryInput = document.createElement("input");
     galleryInput.type = "file";
     galleryInput.accept = "image/*";
+    galleryInput.multiple = true;
     galleryInput.style.display = "none";
     document.body.appendChild(galleryInput);
 
@@ -2006,17 +2134,63 @@
       cameraInput.value = "";
       cameraInput.click();
     });
-    galleryInput.addEventListener("change", (e) => sendPhoto(e.target.files?.[0]));
-    cameraInput.addEventListener("change", (e) => sendPhoto(e.target.files?.[0]));
+    galleryInput.addEventListener("change", (e) => sendPhotos(e.target.files));
+    cameraInput.addEventListener("change", (e) => sendPhotos(e.target.files));
 
     // ----- Image lightbox -----
     const lightboxEl    = document.getElementById("lightbox");
     const lightboxImgEl = document.getElementById("lightbox-img");
     let lightboxImageId = null;
 
-    function openLightbox(imageId) {
+    const lightboxPrevBtn   = document.getElementById("lightbox-prev");
+    const lightboxNextBtn   = document.getElementById("lightbox-next");
+    const lightboxCounterEl = document.getElementById("lightbox-counter");
+    let lightboxGallery = []; // chronological imageIds of the open chat
+
+    function chatImageIds() {
+      return [...messageMap.values()]
+        .filter((m) => m.imageId && !isDeleted(m))
+        .sort((a, b) => (a.$createdAt < b.$createdAt ? -1 : 1))
+        .map((m) => m.imageId);
+    }
+
+    function paintLightboxNav() {
+      const i = lightboxGallery.indexOf(lightboxImageId);
+      const many = lightboxGallery.length > 1;
+      lightboxPrevBtn.classList.toggle("hidden", !many || i <= 0);
+      lightboxNextBtn.classList.toggle("hidden", !many || i >= lightboxGallery.length - 1);
+      lightboxCounterEl.classList.toggle("hidden", !many);
+      if (many) lightboxCounterEl.textContent = `${i + 1} / ${lightboxGallery.length}`;
+    }
+
+    function showLightboxImage(imageId) {
       lightboxImageId = imageId;
-      lightboxImgEl.src = imageViewUrl(imageId);
+      if (lightboxImgEl.dataset.blobUrl) {
+        URL.revokeObjectURL(lightboxImgEl.dataset.blobUrl);
+        delete lightboxImgEl.dataset.blobUrl;
+      }
+      lightboxImgEl.src = "";
+      // Show the cached preview instantly, then swap in the full-res blob.
+      bubbleImageUrl(imageId).then((url) => {
+        if (lightboxImageId === imageId && !lightboxImgEl.dataset.blobUrl) lightboxImgEl.src = url;
+      }).catch(() => {});
+      imageViewBlobUrl(imageId).then((url) => {
+        if (lightboxImageId !== imageId) { URL.revokeObjectURL(url); return; }
+        lightboxImgEl.src = url;
+        lightboxImgEl.dataset.blobUrl = url;
+      }).catch(() => {});
+      paintLightboxNav();
+    }
+
+    function lightboxStep(dir) {
+      const i = lightboxGallery.indexOf(lightboxImageId);
+      const next = lightboxGallery[i + dir];
+      if (next) showLightboxImage(next);
+    }
+
+    function openLightbox(imageId) {
+      lightboxGallery = chatImageIds();
+      showLightboxImage(imageId);
       lightboxEl.classList.remove("hidden");
       if (!history.state || history.state.view !== "lightbox") {
         history.pushState({ view: "lightbox" }, "");
@@ -2024,6 +2198,10 @@
     }
     function hideLightboxUI() {
       lightboxEl.classList.add("hidden");
+      if (lightboxImgEl.dataset.blobUrl) {
+        URL.revokeObjectURL(lightboxImgEl.dataset.blobUrl);
+        delete lightboxImgEl.dataset.blobUrl;
+      }
       lightboxImgEl.src = "";
       lightboxImageId = null;
     }
@@ -2042,6 +2220,32 @@
     document.getElementById("lightbox-close").addEventListener("click", closeLightbox);
     document.getElementById("lightbox-save").addEventListener("click", () => {
       if (lightboxImageId) saveImage(lightboxImageId);
+    });
+    lightboxPrevBtn.addEventListener("click", () => lightboxStep(-1));
+    lightboxNextBtn.addEventListener("click", () => lightboxStep(1));
+    document.addEventListener("keydown", (e) => {
+      if (lightboxEl.classList.contains("hidden")) return;
+      if (e.key === "ArrowRight") lightboxStep(1);
+      else if (e.key === "ArrowLeft") lightboxStep(-1);
+    });
+    // Horizontal swipe steps through the chat's photos, Messenger-style.
+    let lbSwipeX = null, lbSwipeY = null;
+    lightboxEl.addEventListener("touchstart", (e) => {
+      if (e.touches.length === 1) {
+        lbSwipeX = e.touches[0].clientX;
+        lbSwipeY = e.touches[0].clientY;
+      } else {
+        lbSwipeX = lbSwipeY = null;
+      }
+    }, { passive: true });
+    lightboxEl.addEventListener("touchend", (e) => {
+      if (lbSwipeX === null) return;
+      const dx = e.changedTouches[0].clientX - lbSwipeX;
+      const dy = e.changedTouches[0].clientY - lbSwipeY;
+      lbSwipeX = lbSwipeY = null;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        lightboxStep(dx < 0 ? 1 : -1);
+      }
     });
 
     async function saveImage(imageId) {
@@ -2063,40 +2267,50 @@
       }
     }
 
-    async function sendPhoto(file) {
-      if (!file || !activeConversation || !activeOther) return;
+    async function sendPhotos(fileList) {
+      const files = Array.from(fileList || []).filter((f) => f && f.type.startsWith("image/"));
+      if (!files.length || !activeConversation || !activeOther) return;
       const caption = inputEl.value.trim();
       inputEl.value = "";
       setReply(null);
       refreshComposerMode();
 
-      const tempId = tempMsgId();
-      const convId = activeConversation.$id;
-      const localUrl = URL.createObjectURL(file);
-      const optimistic = {
-        $id: tempId,
-        conversationId: convId,
-        senderId: me.$id,
-        receiverId: activeOther.$id,
-        text: caption,
-        $createdAt: new Date().toISOString(),
-        $updatedAt: null,
-        _pending: true,
-        _localImageUrl: localUrl,
-      };
-      renderMessage(optimistic);
+      const conv = activeConversation;
+      const convId = conv.$id;
+      // Paint every bubble up-front so the whole batch shows instantly;
+      // the caption rides on the first photo only.
+      const jobs = files.map((file, i) => {
+        const tempId = tempMsgId();
+        const localUrl = URL.createObjectURL(file);
+        const text = i === 0 ? caption : "";
+        renderMessage({
+          $id: tempId,
+          conversationId: convId,
+          senderId: me.$id,
+          receiverId: activeOther.$id,
+          text,
+          $createdAt: new Date().toISOString(),
+          $updatedAt: null,
+          _pending: true,
+          _localImageUrl: localUrl,
+        });
+        return { file, tempId, localUrl, text };
+      });
 
-      try {
-        const fileDoc = await uploadMessageImage(file, me.$id);
-        const sent = await sendMessage(activeConversation, me.$id, caption, null, fileDoc.$id);
-        applyMessageDelete(tempId);
-        appendCachedMessage(me.$id, convId, sent);
-        renderMessage(sent);
-      } catch (err) {
-        applyMessageDelete(tempId);
-        dialogAlert("Photo send failed: " + (err?.message || err));
-      } finally {
-        URL.revokeObjectURL(localUrl);
+      // Upload one at a time so the messages land in the order they were picked.
+      for (const job of jobs) {
+        try {
+          const fileDoc = await uploadMessageImage(job.file, me.$id);
+          const sent = await sendMessage(conv, me.$id, job.text, null, fileDoc.$id);
+          applyMessageDelete(job.tempId);
+          appendCachedMessage(me.$id, convId, sent);
+          renderMessage(sent);
+        } catch (err) {
+          applyMessageDelete(job.tempId);
+          dialogAlert("Photo send failed: " + (err?.message || err));
+        } finally {
+          URL.revokeObjectURL(job.localUrl);
+        }
       }
     }
     document.getElementById("call-btn").addEventListener("click", () => {
