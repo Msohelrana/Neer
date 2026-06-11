@@ -382,6 +382,19 @@
       }
     }, { root: messagesEl, rootMargin: "600px 0px" });
 
+    // Coalesce bottom-snaps to one per frame — setting scrollTop per rendered
+    // message forces a layout pass each time and freezes big history loads.
+    let scrollPending = false;
+    let bulkRender = false; // true while painting cached history
+    function scheduleScrollToBottom() {
+      if (scrollPending) return;
+      scrollPending = true;
+      requestAnimationFrame(() => {
+        scrollPending = false;
+        messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: "instant" });
+      });
+    }
+
     function leaveActiveConversation() {
       chatEl.dataset.view = "sidebar";
       if (unsubscribe) { unsubscribe(); unsubscribe = null; }
@@ -725,6 +738,7 @@
         ? "bubble system call-event"
         : "bubble " + (msg.senderId === me.$id ? "me" : "them");
       wrap.dataset.id = msg.$id;
+      if (bulkRender) wrap.style.animation = "none"; // no entry animation for history
       paintBubbleContent(wrap, msg);
       if (!isCall && !isDeleted(msg)) bindBubbleLongPress(wrap, msg.$id);
       // Messenger-style: 2+ consecutive caption-less photos from the same
@@ -774,7 +788,7 @@
       }
       bubbleMap.set(msg.$id, wrap);
       paintReactions(msg.$id);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
+      if (!bulkRender) scheduleScrollToBottom();
     }
 
     function showEmptyConvState() {
@@ -1374,8 +1388,39 @@
       }
       const convId = activeConversation.$id;
 
+      // Paint only the latest chunk of history — thousands of bubbles in one
+      // go locks up the main thread. The rest renders on demand.
+      const INITIAL_RENDER_CAP = 150;
       const cached = getCachedMessages(me.$id, convId);
-      cached.forEach(renderMessage);
+      const skipped = Math.max(0, cached.length - INITIAL_RENDER_CAP);
+      if (skipped > 0) {
+        const earlier = document.createElement("button");
+        earlier.type = "button";
+        earlier.className = "load-earlier";
+        earlier.textContent = `Show ${skipped} earlier messages`;
+        earlier.addEventListener("click", () => {
+          // Re-render the full history through the cheap bulk path.
+          messagesEl.innerHTML = "";
+          mediaObserver.disconnect();
+          renderedIds.clear();
+          bubbleMap.clear();
+          dividerMap.clear();
+          anchorIds.clear();
+          shownDividerId = null;
+          lastAnchorTime = null;
+          bulkRender = true;
+          getCachedMessages(me.$id, convId).forEach(renderMessage);
+          bulkRender = false;
+          reactionsMap.forEach((_, id) => paintReactions(id));
+          repaintReceiptIndicator();
+          messagesEl.scrollTop = 0; // reader starts at the old messages
+        });
+        messagesEl.appendChild(earlier);
+      }
+      bulkRender = true;
+      cached.slice(skipped).forEach(renderMessage);
+      bulkRender = false;
+      messagesEl.scrollTop = messagesEl.scrollHeight; // single bottom-snap
 
       let since = cached.length ? cached[cached.length - 1].$createdAt : null;
       const deletedAt = getDeletedAt(me.$id, convId);
