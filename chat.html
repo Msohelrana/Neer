@@ -400,10 +400,14 @@
     }
 
     // Floating ↓ button — appears once the reader scrolls up past a screenful,
-    // jumps back to the newest message, Messenger-style.
+    // jumps back to the newest message, Messenger-style. `stickToBottom`
+    // tracks whether the reader is glued to the newest message, so the view
+    // re-snaps when lazy-loaded media grows the content below them.
     const scrollBottomBtn = document.getElementById("scroll-bottom");
+    let stickToBottom = true;
     messagesEl.addEventListener("scroll", () => {
       const dist = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+      stickToBottom = dist < 80;
       scrollBottomBtn.classList.toggle("hidden", dist < 300);
     }, { passive: true });
     scrollBottomBtn.addEventListener("click", () => {
@@ -580,6 +584,10 @@
             v.controls = true;
             v.playsInline = true;
             v.preload = "metadata";
+            // Re-snap when the player gets its real dimensions.
+            v.addEventListener("loadedmetadata", () => {
+              if (stickToBottom) scheduleScrollToBottom();
+            }, { once: true });
             return v;
           }
           const img = document.createElement("img");
@@ -587,6 +595,11 @@
           img.alt = "Photo";
           img.loading = "lazy";
           img.src = url;
+          // The image grows its bubble when decoded — keep the reader glued
+          // to the newest message unless they scrolled up on purpose.
+          img.addEventListener("load", () => {
+            if (stickToBottom) scheduleScrollToBottom();
+          }, { once: true });
           if (msg.imageId) {
             img.addEventListener("click", (e) => {
               e.stopPropagation();
@@ -634,6 +647,7 @@
                   }
                 });
                 frame.appendChild(ph);
+                if (stickToBottom) scheduleScrollToBottom();
               } else {
                 const { url, type } = await bubbleMediaUrl(fileId);
                 frame.appendChild(buildMedia(url, type));
@@ -1462,6 +1476,7 @@
       bulkRender = true;
       cached.slice(historyStart).forEach(renderMessage);
       bulkRender = false;
+      stickToBottom = true; // fresh chat always opens at the newest message
       messagesEl.scrollTop = messagesEl.scrollHeight; // single bottom-snap
 
       let since = cached.length ? cached[cached.length - 1].$createdAt : null;
