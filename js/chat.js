@@ -31,10 +31,11 @@ export async function getOrCreateConversation(meId, otherId) {
       participants: [meId, otherId],
     },
     [
-      // Only the two participants — Role.users() would let any signed-in
-      // account read other people's conversations.
-      Permission.read(Role.user(meId)),
-      Permission.read(Role.user(otherId)),
+      // Appwrite's client SDK can only grant perms to self/any/users/teams —
+      // granting Role.user(otherId) from the browser is rejected. Role.users()
+      // is the tightest client-side option; true per-pair ACLs need a server
+      // function to re-permission docs after creation.
+      Permission.read(Role.users()),
       Permission.update(Role.user(meId)),
       Permission.delete(Role.user(meId)),
     ]
@@ -78,8 +79,8 @@ export async function sendMessage(conversation, meId, text, reply, imageId) {
     ID.unique(),
     data,
     [
-      Permission.read(Role.user(meId)),
-      Permission.read(Role.user(otherId)),
+      // See getOrCreateConversation — client SDK can't grant Role.user(otherId).
+      Permission.read(Role.users()),
       Permission.update(Role.user(meId)),
       Permission.delete(Role.user(meId)),
     ]

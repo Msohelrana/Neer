@@ -16,13 +16,11 @@ export async function sendSignal(callId, from, to, type, payload) {
       payload: JSON.stringify(payload ?? {}),
     },
     [
-      // Caller + callee only; both may prune the call's signal docs.
-      Permission.read(Role.user(from)),
-      Permission.read(Role.user(to)),
-      Permission.update(Role.user(from)),
-      Permission.update(Role.user(to)),
-      Permission.delete(Role.user(from)),
-      Permission.delete(Role.user(to)),
+      // Client SDK can't grant Role.user(otherId) — see chat.js. Both peers
+      // need read + delete (pruneCallSignals runs on either side).
+      Permission.read(Role.users()),
+      Permission.update(Role.users()),
+      Permission.delete(Role.users()),
     ]
   );
 }

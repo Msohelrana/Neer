@@ -22,15 +22,15 @@ export async function loadReactions(conversationId) {
   }
 }
 
-export async function createReaction(conversationId, messageId, userId, otherId, emoji) {
+export async function createReaction(conversationId, messageId, userId, emoji) {
   return databases.createDocument(
     DB_ID,
     COL_REACTIONS,
     ID.unique(),
     { conversationId, messageId, userId, emoji },
     [
-      Permission.read(Role.user(userId)),
-      Permission.read(Role.user(otherId)),
+      // Client SDK can't grant Role.user(otherId) — see chat.js.
+      Permission.read(Role.users()),
       Permission.update(Role.user(userId)),
       Permission.delete(Role.user(userId)),
     ]

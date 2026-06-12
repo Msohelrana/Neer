@@ -31,12 +31,12 @@ export function compressImage(file, maxDim = IMAGE_MAX_DIM, quality = IMAGE_JPEG
 
 // Images are downscaled client-side; videos can't be transcoded in the
 // browser, so they upload as-is (size-capped by the caller).
-export async function uploadMessageMedia(file, meId, otherId) {
+export async function uploadMessageMedia(file, meId) {
   const payload = file.type.startsWith("video/") ? file : await compressImage(file);
   return storage.createFile(BUCKET_IMAGES, ID.unique(), payload, [
-    // Only sender + receiver — not every signed-in account.
-    Permission.read(Role.user(meId)),
-    Permission.read(Role.user(otherId)),
+    // Client SDK can't grant Role.user(otherId) — Role.users() is the
+    // tightest browser-side option (see chat.js).
+    Permission.read(Role.users()),
     Permission.update(Role.user(meId)),
     Permission.delete(Role.user(meId)),
   ]);

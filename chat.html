@@ -958,22 +958,19 @@
     // ----- Read receipts (sent / delivered / seen) -----
     async function upsertMyReceipt(convId, timestamp) {
       if (!timestamp) return;
-      // The other participant must be able to read my receipt (Seen flips).
-      const otherId = activeConversation?.participants?.find((p) => p !== me.$id);
-      if (!otherId) return;
       const cachedId = getMyReceiptId(me.$id, convId);
       try {
         if (cachedId) {
           await updateReceipt(cachedId, timestamp);
           return;
         }
-        const created = await createReceipt(convId, me.$id, otherId, timestamp);
+        const created = await createReceipt(convId, me.$id, timestamp);
         saveMyReceiptId(me.$id, convId, created.$id);
       } catch (err) {
         // 404 → cached id is stale; recreate.
         if (err?.code === 404) {
           try {
-            const created = await createReceipt(convId, me.$id, otherId, timestamp);
+            const created = await createReceipt(convId, me.$id, timestamp);
             saveMyReceiptId(me.$id, convId, created.$id);
           } catch (e) { console.warn("Receipt recreate failed:", e?.message); }
         } else {
@@ -1038,7 +1035,7 @@
         });
         paintReactions(messageId);
         try {
-          const created = await createReaction(convId, messageId, me.$id, activeOther.$id, emoji);
+          const created = await createReaction(convId, messageId, me.$id, emoji);
           ingestReaction(created);
           paintReactions(messageId);
         } catch (err) {
@@ -2653,7 +2650,6 @@
 
       const conv = activeConversation;
       const convId = conv.$id;
-      const otherId = activeOther.$id; // captured — chat may switch mid-upload
       // Paint every bubble up-front so the whole batch shows instantly;
       // the caption rides on the first photo only.
       const jobs = files.map((file, i) => {
@@ -2678,7 +2674,7 @@
       // Upload one at a time so the messages land in the order they were picked.
       for (const job of jobs) {
         try {
-          const fileDoc = await uploadMessageMedia(job.file, me.$id, otherId);
+          const fileDoc = await uploadMessageMedia(job.file, me.$id);
           const sent = await sendMessage(conv, me.$id, job.text, null, fileDoc.$id);
           applyMessageDelete(job.tempId);
           appendCachedMessage(me.$id, convId, sent);

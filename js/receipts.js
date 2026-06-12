@@ -24,16 +24,16 @@ export async function loadReceipts(conversationId) {
   }
 }
 
-export async function createReceipt(conversationId, userId, otherId, lastSeenAt) {
+export async function createReceipt(conversationId, userId, lastSeenAt) {
   return databases.createDocument(
     DB_ID,
     COL_RECEIPTS,
     ID.unique(),
     { conversationId, userId, lastSeenAt },
     [
-      // The other participant reads this to flip Sent → Seen.
-      Permission.read(Role.user(userId)),
-      Permission.read(Role.user(otherId)),
+      // Client SDK can't grant Role.user(otherId) — see chat.js. The other
+      // participant must read this to flip Sent → Seen.
+      Permission.read(Role.users()),
       Permission.update(Role.user(userId)),
       Permission.delete(Role.user(userId)),
     ]
