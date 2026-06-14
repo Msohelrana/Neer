@@ -8,18 +8,23 @@ const ICE_CONFIG = {
 };
 
 /**
- * Single-channel 1-on-1 audio call using WebRTC + Appwrite signaling.
- * Use `outgoing()` from the caller side, `incoming(offer)` from the callee.
- * Events: 'connecting' | 'ringing' | 'connected' | 'ended'
+ * Single-channel 1-on-1 audio/video call using WebRTC + Appwrite signaling.
+ * Use `startOutgoing()` from the caller side, `acceptIncoming(offer)` from
+ * the callee. Pass `{ media: "video" }` in opts for a video call.
+ * Events: 'ringing' | 'accepted' | 'connected' | 'ended'
+ *         'localstream' | 'remotestream' (MediaStream arg)
  */
 export class Call {
-  constructor(me, other, callId, kind /* "out" | "in" */) {
+  constructor(me, other, callId, kind /* "out" | "in" */, opts = {}) {
     this.me = me;
     this.other = other;
     this.callId = callId;
     this.kind = kind;
+    this.media = opts.media === "video" ? "video" : "audio";
+    this._facing = "user";
     this.pc = new RTCPeerConnection(ICE_CONFIG);
     this.localStream = null;
+    this.remoteStream = null;
     this.remoteAudio = null;
     this.pendingIce = [];
     this.listeners = new Map();
@@ -33,6 +38,11 @@ export class Call {
     this.pc.ontrack = (e) => {
       const stream = e.streams[0];
       this.remoteStream = stream;
+      this._emit("remotestream", stream);
+      // Video calls play audio through the <video> element the UI binds to
+      // this stream; the earpiece/loudspeaker routing only makes sense for
+      // voice-only calls.
+      if (this.media === "video") return;
       this.remoteAudio = document.createElement("audio");
       this.remoteAudio.autoplay = true;
       this.remoteAudio.srcObject = stream;
@@ -62,8 +72,41 @@ export class Call {
   }
 
   async _getMic() {
-    this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    const constraints = { audio: true };
+    if (this.media === "video") constraints.video = { facingMode: this._facing };
+    this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
     this.localStream.getTracks().forEach((t) => this.pc.addTrack(t, this.localStream));
+    this._emit("localstream", this.localStream);
+  }
+
+  setCameraEnabled(on) {
+    this.localStream?.getVideoTracks().forEach((t) => (t.enabled = !!on));
+  }
+
+  // Swap front/back camera mid-call by renegotiating the video sender's track.
+  async switchCamera() {
+    if (this.media !== "video" || !this.localStream) return;
+    const oldTrack = this.localStream.getVideoTracks()[0];
+    if (!oldTrack) return;
+    const next = this._facing === "user" ? "environment" : "user";
+    let newStream;
+    try {
+      newStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: next },
+      });
+    } catch (err) {
+      console.warn("Camera switch failed:", err?.message || err);
+      return;
+    }
+    const newTrack = newStream.getVideoTracks()[0];
+    const sender = this.pc.getSenders().find((s) => s.track?.kind === "video");
+    if (sender) await sender.replaceTrack(newTrack);
+    oldTrack.stop();
+    this.localStream.removeTrack(oldTrack);
+    this.localStream.addTrack(newTrack);
+    this._facing = next;
+    this._emit("localstream", this.localStream);
   }
 
   async startOutgoing() {

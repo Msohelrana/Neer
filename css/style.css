@@ -2634,3 +2634,99 @@ a:hover {
     transform: rotate(360deg);
   }
 }
+
+/* ============================================================
+   Video call — remote fills the screen, local rides as a PiP tile.
+   The audio-call avatar/name layout still hosts the ringing state;
+   .video-active flips it to the live video layout once both peers
+   are streaming.
+   ============================================================ */
+
+.call-remote-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+  z-index: 1;
+}
+
+.call-local-video {
+  position: absolute;
+  top: max(76px, calc(env(safe-area-inset-top, 0px) + 60px));
+  right: 14px;
+  width: 110px;
+  height: 150px;
+  object-fit: cover;
+  border-radius: 14px;
+  background: #111;
+  z-index: 3;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+/* Mirror the front-facing preview so it acts like a real mirror. */
+.call-local-video.mirrored {
+  transform: scaleX(-1);
+}
+
+.call-overlay .call-screen {
+  position: relative;
+  z-index: 2;
+}
+
+/* Active video stream — hide the now-redundant avatar+name and float the
+   status pill + controls over the remote video. */
+.call-overlay.video-active .call-screen .avatar,
+.call-overlay.video-active .call-screen .call-name {
+  display: none;
+}
+
+.call-overlay.video-active .call-status {
+  position: absolute;
+  top: max(20px, env(safe-area-inset-top, 20px));
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.45);
+  padding: 6px 14px;
+  border-radius: 999px;
+  color: #fff;
+  z-index: 3;
+}
+
+.call-overlay.video-active .call-controls {
+  position: relative;
+  z-index: 3;
+  width: 100%;
+  padding: 32px 16px clamp(20px, 4vh, 36px);
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.55));
+  margin-top: auto;
+  margin-bottom: 0;
+}
+
+.call-overlay.video-active .call-minimize {
+  color: #fff;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  z-index: 3;
+}
+
+.call-btn-circle.camera.active,
+.call-btn-circle.flip.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+@media (max-width: 640px) {
+  .call-local-video {
+    width: 92px;
+    height: 128px;
+    top: max(70px, calc(env(safe-area-inset-top, 0px) + 54px));
+    right: 10px;
+  }
+}
