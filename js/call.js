@@ -56,11 +56,26 @@ export class Call {
       const s = this.pc.connectionState;
       if (s === "connected") {
         this.startedAt = Date.now();
+        if (this.media === "video") this._tuneVideoSender().catch(() => {});
         this._emit("connected");
       } else if (s === "failed" || s === "disconnected" || s === "closed") {
         this.hangup();
       }
     };
+  }
+
+  // Pin the video sender to a reasonable ceiling and keep framerate steady
+  // when bandwidth tightens (better than jerky high-res for talking heads).
+  // GCC backs off below this automatically on a poor link.
+  async _tuneVideoSender(maxBitrateBps = 1_200_000) {
+    const sender = this.pc.getSenders().find((s) => s.track?.kind === "video");
+    if (!sender) return;
+    const params = sender.getParameters();
+    if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+    params.encodings[0].maxBitrate = maxBitrateBps;
+    params.degradationPreference = "maintain-framerate";
+    try { await sender.setParameters(params); }
+    catch (e) { console.warn("setParameters:", e?.message); }
   }
 
   on(event, fn) {
@@ -72,8 +87,19 @@ export class Call {
   }
 
   async _getMic() {
-    const constraints = { audio: true };
-    if (this.media === "video") constraints.video = { facingMode: this._facing };
+    // Echo cancellation/noise suppression default to on for audio. For video
+    // we ask for 720p @ 30fps; the browser downshifts if the camera can't.
+    const constraints = {
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    };
+    if (this.media === "video") {
+      constraints.video = {
+        facingMode: this._facing,
+        width:  { ideal: 1280, max: 1920 },
+        height: { ideal: 720,  max: 1080 },
+        frameRate: { ideal: 30, max: 30 },
+      };
+    }
     this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
     this.localStream.getTracks().forEach((t) => this.pc.addTrack(t, this.localStream));
     this._emit("localstream", this.localStream);

@@ -104,13 +104,17 @@ the end of each call.
 - **Row security**: ON
 - **Attributes**:
 
-  | key     | type   | size | required |
-  |---------|--------|------|----------|
-  | callId  | String | 64   | yes      |
-  | from    | String | 64   | yes      |
-  | to      | String | 64   | yes      |
-  | type    | String | 16   | yes      |
-  | payload | String | 4000 | no       |
+  | key     | type   | size  | required |
+  |---------|--------|-------|----------|
+  | callId  | String | 64    | yes      |
+  | from    | String | 64    | yes      |
+  | to      | String | 64    | yes      |
+  | type    | String | 16    | yes      |
+  | payload | String | 16384 | no       |
+
+  Note: `payload` must be at least ~8 KB to fit a video-call SDP offer; 4000
+  is enough for voice but rejects video. If you set up the collection before
+  video calling was added, grow the attribute size in the console.
 
 - **Indexes**: `to_idx` on `to`.
 
