@@ -1,6 +1,19 @@
-import { client, databases, Query, ID, Permission, Role } from "./appwrite.js";
-import { DB_ID, COL_REACTIONS } from "./config.js";
-import { onCollection } from "./realtime.js";
+import { db, mapDoc } from "./firebase.js";
+import {
+  collection,
+  doc,
+  addDoc,
+  getDoc,
+  getDocs,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  where,
+  limit,
+  serverTimestamp,
+} from "firebase/firestore";
+import { COL_REACTIONS } from "./config.js";
 
 /**
  * Persistent message reactions. Each (messageId, userId) pair has at most one
@@ -8,49 +21,48 @@ import { onCollection } from "./realtime.js";
  * second one. Both participants can read all reactions in their conversation.
  */
 
+const reactionsCol = () => collection(db, COL_REACTIONS);
+
 export async function loadReactions(conversationId) {
   try {
-    const res = await databases.listDocuments(DB_ID, COL_REACTIONS, [
-      Query.equal("conversationId", conversationId),
-      Query.limit(500),
-    ]);
-    return res.documents;
+    const res = await getDocs(
+      query(reactionsCol(), where("conversationId", "==", conversationId), limit(500))
+    );
+    return res.docs.map(mapDoc);
   } catch (err) {
-    // Collection might not exist yet — chat should still work without reactions.
     console.warn("loadReactions failed:", err?.message || err);
     return [];
   }
 }
 
 export async function createReaction(conversationId, messageId, userId, emoji) {
-  return databases.createDocument(
-    DB_ID,
-    COL_REACTIONS,
-    ID.unique(),
-    { conversationId, messageId, userId, emoji },
-    [
-      // Client SDK can't grant Role.user(otherId) — see chat.js.
-      Permission.read(Role.users()),
-      Permission.update(Role.user(userId)),
-      Permission.delete(Role.user(userId)),
-    ]
-  );
+  const ref = await addDoc(reactionsCol(), {
+    conversationId, messageId, userId, emoji,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  return mapDoc(await getDoc(ref));
 }
 
 export async function updateReaction(reactionId, emoji) {
-  return databases.updateDocument(DB_ID, COL_REACTIONS, reactionId, { emoji });
+  return updateDoc(doc(db, COL_REACTIONS, reactionId), { emoji, updatedAt: serverTimestamp() });
 }
 
 export async function removeReaction(reactionId) {
-  return databases.deleteDocument(DB_ID, COL_REACTIONS, reactionId);
+  return deleteDoc(doc(db, COL_REACTIONS, reactionId));
 }
 
 export function subscribeReactions(conversationId, handlers) {
   const { onCreate, onUpdate, onDelete } = handlers;
-  return onCollection(COL_REACTIONS, (resp) => {
-    if (resp.payload?.conversationId !== conversationId) return;
-    if (resp.events.some((e) => e.endsWith(".create"))) onCreate?.(resp.payload);
-    else if (resp.events.some((e) => e.endsWith(".update"))) onUpdate?.(resp.payload);
-    else if (resp.events.some((e) => e.endsWith(".delete"))) onDelete?.(resp.payload);
+  const q = query(reactionsCol(), where("conversationId", "==", conversationId));
+  let first = true;
+  return onSnapshot(q, (snap) => {
+    if (first) { first = false; return; }
+    snap.docChanges().forEach((change) => {
+      const payload = mapDoc(change.doc);
+      if (change.type === "added") onCreate?.(payload);
+      else if (change.type === "modified") onUpdate?.(payload);
+      else if (change.type === "removed") onDelete?.(payload);
+    });
   });
 }

@@ -1,11 +1,13 @@
-// Service worker — passes through fetches AND handles Web Push notifications
-// delivered by the send-push Appwrite Function.
+// Service worker — passes through fetches AND handles Web Push notifications.
+// NOTE: closed-app push is currently inert — the server-side sender was dropped
+// in the Firebase migration (no Cloud Functions on the free plan). The push /
+// notificationclick handlers below remain ready for if a sender is re-added.
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
 self.addEventListener("fetch", (event) => {
-  // Only same-origin requests; cross-origin (Appwrite) go straight to the
-  // network so CORS failures surface cleanly instead of as SW errors.
+  // Only same-origin requests; cross-origin (Firebase APIs, Storage) go
+  // straight to the network so CORS failures surface cleanly, not as SW errors.
   if (new URL(event.request.url).origin !== self.location.origin) return;
   event.respondWith(fetch(event.request));
 });

@@ -1,7 +1,26 @@
-import { client, databases, Query, ID, Permission, Role } from "./appwrite.js";
-import { DB_ID, COL_CONVERSATIONS, COL_MESSAGES } from "./config.js";
-import { onCollection } from "./realtime.js";
+import { db, mapDoc } from "./firebase.js";
+import {
+  collection,
+  doc,
+  addDoc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  where,
+  orderBy,
+  limit,
+  or,
+  serverTimestamp,
+  Timestamp,
+} from "firebase/firestore";
+import { COL_CONVERSATIONS, COL_MESSAGES } from "./config.js";
 import { getCachedConversation, saveCachedConversation } from "./cache.js";
+
+const messagesCol = () => collection(db, COL_MESSAGES);
 
 function pairKey(a, b) {
   return [a, b].sort().join("_");
@@ -13,51 +32,45 @@ export async function getOrCreateConversation(meId, otherId) {
   const cached = getCachedConversation(meId, key);
   if (cached) return cached;
 
-  const found = await databases.listDocuments(DB_ID, COL_CONVERSATIONS, [
-    Query.equal("pairKey", key),
-    Query.limit(1),
-  ]);
-  if (found.documents.length) {
-    saveCachedConversation(meId, key, found.documents[0]);
-    return found.documents[0];
+  // The pairKey IS the document id, so a 1-on-1 pair always resolves to the
+  // same doc and we can fetch it with a direct get() (no query) — which lets
+  // the read rule gate on `participants` without needing a composite index.
+  const ref = doc(db, COL_CONVERSATIONS, key);
+  const snap = await getDoc(ref);
+  if (snap.exists()) {
+    const conv = mapDoc(snap);
+    saveCachedConversation(meId, key, conv);
+    return conv;
   }
 
-  const created = await databases.createDocument(
-    DB_ID,
-    COL_CONVERSATIONS,
-    ID.unique(),
-    {
-      pairKey: key,
-      participants: [meId, otherId],
-    },
-    [
-      // Appwrite's client SDK can only grant perms to self/any/users/teams —
-      // granting Role.user(otherId) from the browser is rejected. Role.users()
-      // is the tightest client-side option; true per-pair ACLs need a server
-      // function to re-permission docs after creation.
-      Permission.read(Role.users()),
-      Permission.update(Role.user(meId)),
-      Permission.delete(Role.user(meId)),
-    ]
-  );
+  // setDoc on the deterministic id is idempotent if both peers create at once.
+  await setDoc(ref, {
+    pairKey: key,
+    participants: [meId, otherId],
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  const created = mapDoc(await getDoc(ref));
   saveCachedConversation(meId, key, created);
   return created;
 }
 
 /**
- * Loads messages for a conversation. If `since` is an ISO timestamp,
- * only messages created strictly after that time are returned —
- * use this with the latest cached message's `$createdAt` to fetch deltas.
+ * Loads messages for a conversation. If `since` is an ISO timestamp, only
+ * messages created strictly after that time are returned — use this with the
+ * latest cached message's `$createdAt` to fetch deltas.
  */
 export async function loadMessages(conversationId, since) {
-  const queries = [
-    Query.equal("conversationId", conversationId),
-    Query.orderAsc("$createdAt"),
-    Query.limit(200),
+  const filters = [
+    where("conversationId", "==", conversationId),
+    orderBy("createdAt", "asc"),
+    limit(200),
   ];
-  if (since) queries.push(Query.greaterThan("$createdAt", since));
-  const res = await databases.listDocuments(DB_ID, COL_MESSAGES, queries);
-  return res.documents;
+  if (since) {
+    filters.splice(1, 0, where("createdAt", ">", Timestamp.fromDate(new Date(since))));
+  }
+  const res = await getDocs(query(messagesCol(), ...filters));
+  return res.docs.map(mapDoc);
 }
 
 export async function sendMessage(conversation, meId, text, reply, imageId) {
@@ -67,32 +80,26 @@ export async function sendMessage(conversation, meId, text, reply, imageId) {
     senderId: meId,
     receiverId: otherId,
     text: text || "",
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   };
   if (reply?.id) {
     data.replyToId   = reply.id;
     data.replyToText = (reply.text || "").slice(0, 280);
   }
   if (imageId) data.imageId = imageId;
-  return databases.createDocument(
-    DB_ID,
-    COL_MESSAGES,
-    ID.unique(),
-    data,
-    [
-      // See getOrCreateConversation — client SDK can't grant Role.user(otherId).
-      Permission.read(Role.users()),
-      Permission.update(Role.user(meId)),
-      Permission.delete(Role.user(meId)),
-    ]
-  );
+  const ref = await addDoc(messagesCol(), data);
+  return mapDoc(await getDoc(ref));
 }
 
 export async function editMessage(messageId, newText) {
-  return databases.updateDocument(DB_ID, COL_MESSAGES, messageId, { text: newText });
+  const ref = doc(db, COL_MESSAGES, messageId);
+  await updateDoc(ref, { text: newText, updatedAt: serverTimestamp() });
+  return mapDoc(await getDoc(ref));
 }
 
 export async function deleteMessage(messageId) {
-  return databases.deleteDocument(DB_ID, COL_MESSAGES, messageId);
+  return deleteDoc(doc(db, COL_MESSAGES, messageId));
 }
 
 // Tombstone a message instead of deleting it — replaces text with a sentinel
@@ -100,9 +107,26 @@ export async function deleteMessage(messageId) {
 // everyone" so the chat history shows the message ever existed.
 export const DELETED_SENTINEL = "__DELETED__";
 export async function markDeleted(messageId) {
-  return databases.updateDocument(DB_ID, COL_MESSAGES, messageId, {
-    text: DELETED_SENTINEL,
-  });
+  const ref = doc(db, COL_MESSAGES, messageId);
+  await updateDoc(ref, { text: DELETED_SENTINEL, updatedAt: serverTimestamp() });
+  return mapDoc(await getDoc(ref));
+}
+
+// Translate a Firestore snapshot's docChanges into create/update/delete
+// callbacks, skipping the initial snapshot so existing history isn't replayed
+// as new-message events.
+function dispatchChanges(handlers) {
+  const { onCreate, onUpdate, onDelete } = handlers;
+  let first = true;
+  return (snap) => {
+    if (first) { first = false; return; }
+    snap.docChanges().forEach((change) => {
+      const payload = mapDoc(change.doc);
+      if (change.type === "added") onCreate?.(payload);
+      else if (change.type === "modified") onUpdate?.(payload);
+      else if (change.type === "removed") onDelete?.(payload);
+    });
+  };
 }
 
 /**
@@ -110,27 +134,23 @@ export async function markDeleted(messageId) {
  * Pass any combination of { onCreate, onUpdate, onDelete }; returns an unsubscribe fn.
  */
 export function subscribeMessages(conversationId, handlers) {
-  const { onCreate, onUpdate, onDelete } = handlers;
-  return onCollection(COL_MESSAGES, (resp) => {
-    if (resp.payload?.conversationId !== conversationId) return;
-    if (resp.events.some((e) => e.endsWith(".create"))) onCreate?.(resp.payload);
-    else if (resp.events.some((e) => e.endsWith(".update"))) onUpdate?.(resp.payload);
-    else if (resp.events.some((e) => e.endsWith(".delete"))) onDelete?.(resp.payload);
-  });
+  const q = query(
+    messagesCol(),
+    where("conversationId", "==", conversationId),
+    orderBy("createdAt", "asc")
+  );
+  return onSnapshot(q, dispatchChanges(handlers));
 }
 
 /**
- * Global message subscription — fires for any message in the collection where
- * the current user is sender or receiver. Used by the sidebar to keep last-
- * message previews and unread badges live across all conversations.
+ * Global message subscription — fires for any message where the current user is
+ * sender or receiver. Used by the sidebar to keep last-message previews and
+ * unread badges live across all conversations.
  */
 export function subscribeAllMessages(meId, handlers) {
-  const { onCreate, onUpdate, onDelete } = handlers;
-  return onCollection(COL_MESSAGES, (resp) => {
-    const msg = resp.payload;
-    if (!msg || (msg.senderId !== meId && msg.receiverId !== meId)) return;
-    if (resp.events.some((e) => e.endsWith(".create"))) onCreate?.(msg);
-    else if (resp.events.some((e) => e.endsWith(".update"))) onUpdate?.(msg);
-    else if (resp.events.some((e) => e.endsWith(".delete"))) onDelete?.(msg);
-  });
+  const q = query(
+    messagesCol(),
+    or(where("senderId", "==", meId), where("receiverId", "==", meId))
+  );
+  return onSnapshot(q, dispatchChanges(handlers));
 }

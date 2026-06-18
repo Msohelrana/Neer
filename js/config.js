@@ -1,38 +1,41 @@
-// Fill these in after creating the project + database in the Appwrite console.
-// See README.md for step-by-step setup.
+// Firebase project configuration. See README.md for how to obtain these values
+// (Firebase console → Project settings → Your apps → Web app → SDK setup).
+//
+// These values are NOT secret — the Firebase Web config is meant to ship in the
+// client. Access is enforced by the Firestore Security Rules (firestore.rules),
+// not by hiding this object.
+export const firebaseConfig = {
+  apiKey: "AIzaSyBHBwV92lcPIg3S-31VZFmy4a1QN7fgDJE",
+  authDomain: "neer-fc5ec.firebaseapp.com",
+  projectId: "neer-fc5ec",
+  storageBucket: "neer-fc5ec.firebasestorage.app",
+  messagingSenderId: "123030187882",
+  appId: "1:123030187882:web:b8052e3a03f73ee0c4ff13",
+  measurementId: "G-51D7D7962R"
+};
 
-export const APPWRITE_ENDPOINT = "https://sgp.cloud.appwrite.io/v1";
-export const APPWRITE_PROJECT_ID = "6a268efe0032493b8aaf";
-
-export const DB_ID = "6a268f90000c630a4d44";
-
+// Firestore collection names.
 export const COL_USERS = "users";
 export const COL_CONVERSATIONS = "conversations";
 export const COL_MESSAGES = "messages";
 export const COL_REACTIONS = "reactions";
 export const COL_RECEIPTS = "receipts";
-export const COL_PUSH_SUBS = "pushSubscriptions";
 export const COL_SIGNALING = "signaling";
+// Message photos are stored as base64 data URLs in their own docs (Firebase
+// Storage needs the paid Blaze plan; this keeps attachments on the free plan).
+export const COL_MEDIA = "media";
 
-// Admin approval gate. Console setup:
-//  1. Auth → Teams → create a team named exactly "admins"; add yourself.
-//  2. Databases → create collection "approvals" with attributes:
-//     userId (string, 64, required) and email (string, 320, required),
-//     plus an index on userId. Approval is bound to the email — changing
-//     the account email forces a fresh admin approval.
-//  3. Collection Settings → Permissions (document security OFF):
-//     Role "Users" → Read;  Role "Team: admins" → Create, Read, Update, Delete.
-// Only team members can create approval docs, so users can't approve themselves.
+// Admin approval gate.
+//  - `approvals/{userId}` docs (created by an admin) grant a user entry. Approval
+//    is bound to the email, so changing the account email forces a fresh approval.
+//  - `admins/{uid}` docs mark who may write approvals. Create these by hand in the
+//    Firebase console (there is no client-side way to grant admin — by design).
+// Security rules enforce both (see firestore.rules).
 export const COL_APPROVALS = "approvals";
-export const ADMIN_TEAM_NAME = "admins";
-
-// Storage bucket for message-attached images. Create this in the Appwrite
-// console: Storage → New bucket. Permissions: Create=Users, Read=Users.
-// Allowed file extensions: jpg, jpeg, png, webp, gif. Max size 5 MB.
-export const BUCKET_IMAGES = "6a28ea06002d4e9fe15e";
+export const COL_ADMINS = "admins";
 
 // Client-side compression target. Photos larger than these get downscaled and
-// re-encoded as JPEG before upload — saves bandwidth + bucket quota.
+// re-encoded as JPEG before upload — saves bandwidth + storage quota.
 export const IMAGE_MAX_DIM = 1280;
 export const IMAGE_JPEG_QUALITY = 0.78;
 
@@ -45,9 +48,3 @@ export const RING_TIMEOUT_MS = 90 * 1000;
 // user doesn't type within this many ms, the four left-side action buttons
 // (+, camera, gallery, mic) come back. Set to 0 to disable.
 export const COMPOSER_AUTO_EXPAND_MS = 5 * 1000;
-
-// Web Push public key (VAPID). Generate the keypair with
-//   npx web-push generate-vapid-keys
-// then paste the public key here and the private key into the send-push
-// Appwrite function's env (VAPID_PRIVATE_KEY).
-export const VAPID_PUBLIC_KEY = "BDd1jvwR8SlKaP4PclcpsBULsAiMeZKw7_HVWAgNq1AzZopnRWA0-0XH_JdSE7SGIxKoSjIHZK-ge1F4sjkUaw4";

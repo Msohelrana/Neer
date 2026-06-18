@@ -1,5 +1,16 @@
-import { storage, ID, Permission, Role } from "./appwrite.js";
-import { BUCKET_IMAGES, IMAGE_MAX_DIM, IMAGE_JPEG_QUALITY } from "./config.js";
+import { db } from "./firebase.js";
+import { collection, doc, addDoc, getDoc, serverTimestamp } from "firebase/firestore";
+import { COL_MEDIA, IMAGE_MAX_DIM, IMAGE_JPEG_QUALITY } from "./config.js";
+
+// Firebase Storage requires the paid Blaze plan, so on the free plan we keep
+// message photos in Firestore instead: each attachment is its own `media` doc
+// holding a base64 data URL of the compressed image. Messages reference it by
+// id (`imageId`), and the bubble fetches the media doc lazily on render.
+//
+// Firestore caps a document at ~1 MiB, so this works for photos (compressed to
+// a few hundred KB) but NOT for video — video attachments are unsupported here.
+
+const MAX_DATAURL_BYTES = 1_000_000; // headroom under Firestore's ~1 MiB doc cap
 
 // Downscale + re-encode an image File to JPEG via <canvas>. Big phone photos
 // (4–10 MB) routinely shrink to ~150–300 KB this way without visible loss.
@@ -29,56 +40,59 @@ export function compressImage(file, maxDim = IMAGE_MAX_DIM, quality = IMAGE_JPEG
   });
 }
 
-// Images are downscaled client-side; videos can't be transcoded in the
-// browser, so they upload as-is (size-capped by the caller).
-export async function uploadMessageMedia(file, meId) {
-  const payload = file.type.startsWith("video/") ? file : await compressImage(file);
-  return storage.createFile(BUCKET_IMAGES, ID.unique(), payload, [
-    // Client SDK can't grant Role.user(otherId) — Role.users() is the
-    // tightest browser-side option (see chat.js).
-    Permission.read(Role.users()),
-    Permission.update(Role.user(meId)),
-    Permission.delete(Role.user(meId)),
-  ]);
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("File read failed"));
+    reader.readAsDataURL(file);
+  });
 }
 
-// Bandwidth-friendly preview URL — Appwrite resizes server-side and caches.
-export function imagePreviewUrl(fileId, width = 800) {
-  return storage.getFilePreview(BUCKET_IMAGES, fileId, width);
+/**
+ * Compress a photo and store it as a `media` doc. Returns an Appwrite-style
+ * { $id } where $id is the media doc id (stored as the message's imageId).
+ * Throws on video, or on an image too large to fit a Firestore doc even after
+ * a second, harder compression pass.
+ */
+export async function uploadMessageMedia(file, meId, conversationId) {
+  if (file.type.startsWith("video/")) {
+    throw new Error("Video attachments aren't supported on the free plan.");
+  }
+
+  let compressed = await compressImage(file);
+  let dataUrl = await fileToDataUrl(compressed);
+  if (dataUrl.length > MAX_DATAURL_BYTES) {
+    // Second pass: smaller + lower quality before giving up.
+    compressed = await compressImage(file, 1024, 0.6);
+    dataUrl = await fileToDataUrl(compressed);
+  }
+  if (dataUrl.length > MAX_DATAURL_BYTES) {
+    throw new Error("Image is too large to send (try a smaller photo).");
+  }
+
+  const ref = await addDoc(collection(db, COL_MEDIA), {
+    conversationId,
+    senderId: meId,
+    type: "image/jpeg",
+    dataUrl,
+    createdAt: serverTimestamp(),
+  });
+  return { $id: ref.id };
 }
 
-// Full-resolution view URL — opened when the user taps a bubble image.
-export function imageViewUrl(fileId) {
-  return storage.getFileView(BUCKET_IMAGES, fileId);
-}
-
-// Cross-origin `<img>` tags can't carry the session cookie, so a bucket with
-// Read=Users will 401 the request and the browser shows a broken-image icon.
-// fetch() with credentials does send the cookie, so we pull the bytes once and
-// hand back a same-origin blob URL the <img> can render. Callers MUST revoke
-// the URL (revoke on img load/error works well).
-// MIME type without downloading the body — used to decide how to render a
-// media bubble before committing to a (possibly huge) download.
-export async function mediaContentType(fileId) {
-  const url = storage.getFileView(BUCKET_IMAGES, fileId);
-  const res = await fetch(url, { method: "HEAD", credentials: "include" });
-  if (!res.ok) throw new Error("HEAD failed: " + res.status);
-  return res.headers.get("content-type") || "";
-}
-
-// Both resolve to { url, type } — the MIME type tells the caller whether the
-// file is a photo or a video.
-export async function imagePreviewBlobUrl(fileId, width = 800) {
-  const url = storage.getFilePreview(BUCKET_IMAGES, fileId, width);
-  const res = await fetch(url, { credentials: "include" });
-  if (!res.ok) throw new Error("Preview fetch failed: " + res.status);
-  const blob = await res.blob();
-  return { url: URL.createObjectURL(blob), type: blob.type };
-}
+// Resolves to { url, type } — url is the stored data URL (usable directly as an
+// <img>/<video> src). Used via media-cache.js, which caches the promise.
 export async function imageViewBlobUrl(fileId) {
-  const url = storage.getFileView(BUCKET_IMAGES, fileId);
-  const res = await fetch(url, { credentials: "include" });
-  if (!res.ok) throw new Error("View fetch failed: " + res.status);
-  const blob = await res.blob();
-  return { url: URL.createObjectURL(blob), type: blob.type };
+  const snap = await getDoc(doc(db, COL_MEDIA, fileId));
+  if (!snap.exists()) throw new Error("media not found");
+  const data = snap.data();
+  return { url: data.dataUrl, type: data.type || "image/jpeg" };
+}
+
+// MIME type for a media doc — used to decide photo vs. video before rendering.
+export async function mediaContentType(fileId) {
+  const snap = await getDoc(doc(db, COL_MEDIA, fileId));
+  if (!snap.exists()) throw new Error("media not found");
+  return snap.data().type || "image/jpeg";
 }

@@ -6,7 +6,7 @@
 
 import { Call } from "./call.js";
 import { subscribeSignals } from "./signaling.js";
-import { ID as AppwriteID } from "./appwrite.js";
+import { uid } from "./firebase.js";
 import { RING_TIMEOUT_MS } from "./config.js";
 import { dialogAlert } from "./dialog.js";
 import { showToast } from "./toast.js";
@@ -218,7 +218,7 @@ export function setupCallUI(ctx) {
     if (activeCall) { showToast("Already on a call"); return; }
     const conv = ctx.getActiveConversation();
     if (!conv) return;
-    const callId = AppwriteID.unique();
+    const callId = uid();
     const call = new Call(ctx.me, other, callId, "out", { media });
     activeCall = call;
     wireCall(call, other, conv);

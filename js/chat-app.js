@@ -75,7 +75,7 @@ import {
   removeFromOutbox,
   outboxForConversation,
 } from "./outbox.js";
-import { uploadMessageMedia, imageViewUrl } from "./photos.js";
+import { uploadMessageMedia } from "./photos.js";
 import { isApproved, isAdmin } from "./approval.js";
 
 import { paintAvatar, avatarHue, avatarInitial } from "./avatar.js";
@@ -1736,19 +1736,14 @@ camera = setupCamera({
 galleryInput.addEventListener("change", (e) => sendPhotos(e.target.files));
 cameraInput.addEventListener("change", (e) => sendPhotos(e.target.files));
 
-const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // Appwrite bucket limit
-
 async function sendPhotos(fileList) {
-  const all = Array.from(fileList || []).filter(
-    (f) => f && (f.type.startsWith("image/") || f.type.startsWith("video/"))
-  );
-  const files = all.filter((f) => {
-    if (f.type.startsWith("video/") && f.size > MAX_VIDEO_BYTES) {
-      dialogAlert(`"${f.name}" is too large — videos can be up to 50 MB.`);
-      return false;
-    }
-    return true;
-  });
+  const all = Array.from(fileList || []).filter((f) => f && f.type.startsWith("image/"));
+  // Video can't be stored on the free plan (Firestore's ~1 MiB doc cap), so
+  // it's filtered out with a heads-up rather than failing mid-upload.
+  if (Array.from(fileList || []).some((f) => f && f.type.startsWith("video/"))) {
+    dialogAlert("Video attachments aren't supported on the free plan — only photos.");
+  }
+  const files = all;
   if (!files.length || !activeConversation || !activeOther) return;
   const caption = inputEl.value.trim();
   inputEl.value = "";
@@ -1778,7 +1773,7 @@ async function sendPhotos(fileList) {
 
   for (const job of jobs) {
     try {
-      const fileDoc = await uploadMessageMedia(job.file, me.$id);
+      const fileDoc = await uploadMessageMedia(job.file, me.$id, convId);
       const sent = await sendMessage(conv, me.$id, job.text, null, fileDoc.$id);
       applyMessageDelete(job.tempId);
       appendCachedMessage(me.$id, convId, sent);
@@ -1794,7 +1789,8 @@ async function sendPhotos(fileList) {
 
 async function saveImage(imageId) {
   try {
-    const res = await fetch(imageViewUrl(imageId), { credentials: "include" });
+    const { url } = await bubbleMediaUrl(imageId);
+    const res = await fetch(url);
     if (!res.ok) throw new Error("HTTP " + res.status);
     const blob = await res.blob();
     const objectUrl = URL.createObjectURL(blob);
@@ -2027,7 +2023,7 @@ passwordForm.addEventListener("submit", async (e) => {
   }
 });
 
-// Email change: Appwrite un-verifies the account, and the approval doc no
+// Email change: Firebase un-verifies the account, and the approval doc no
 // longer matches the new address — so both gates re-arm automatically.
 document.getElementById("email-form").addEventListener("submit", async (e) => {
   e.preventDefault();

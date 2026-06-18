@@ -1,0 +1,102 @@
+rules_version = '2';
+
+// Security rules for Neer. These REPLACE Appwrite's per-document permission
+// lists — access is centralized here. Conversations/messages/reactions/receipts
+// are gated on membership of the conversation's `participants` array, so a user
+// can only ever read the threads they're part of (stronger than the old model,
+// where any signed-in user could read everything).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // True when the caller is a participant of the given conversation.
+    function isParticipant(convId) {
+      return signedIn()
+        && request.auth.uid in
+           get(/databases/$(database)/documents/conversations/$(convId)).data.participants;
+    }
+
+    // User profiles: anyone signed in can read (sidebar needs the roster);
+    // you may only create/update your own.
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.uid == userId;
+      allow delete: if false;
+    }
+
+    // Conversation docs use the deterministic pairKey as their id and carry a
+    // 2-element participants array.
+    match /conversations/{convId} {
+      // `resource == null` lets a getOrCreate flow probe a not-yet-existent doc
+      // (otherwise the get is denied and the conversation can never be created).
+      allow get: if signedIn()
+        && (resource == null || request.auth.uid in resource.data.participants);
+      allow create: if signedIn()
+        && request.auth.uid in request.resource.data.participants
+        && request.resource.data.participants.size() == 2;
+      allow update, delete: if signedIn() && request.auth.uid in resource.data.participants;
+    }
+
+    match /messages/{msgId} {
+      allow read: if isParticipant(resource.data.conversationId);
+      allow create: if isParticipant(request.resource.data.conversationId)
+        && request.auth.uid == request.resource.data.senderId;
+      // Only the sender may edit (incl. tombstone) or delete their message.
+      allow update, delete: if signedIn() && request.auth.uid == resource.data.senderId;
+    }
+
+    // Photo attachments (base64 data URL per doc). Same participation gate as
+    // messages; only the sender who created it may delete it.
+    match /media/{id} {
+      allow read: if isParticipant(resource.data.conversationId);
+      allow create: if isParticipant(request.resource.data.conversationId)
+        && request.auth.uid == request.resource.data.senderId;
+      allow update: if false;
+      allow delete: if signedIn() && request.auth.uid == resource.data.senderId;
+    }
+
+    match /reactions/{id} {
+      allow read: if isParticipant(resource.data.conversationId);
+      allow create: if isParticipant(request.resource.data.conversationId)
+        && request.auth.uid == request.resource.data.userId;
+      allow update, delete: if signedIn() && request.auth.uid == resource.data.userId;
+    }
+
+    match /receipts/{id} {
+      allow read: if isParticipant(resource.data.conversationId);
+      allow create: if isParticipant(request.resource.data.conversationId)
+        && request.auth.uid == request.resource.data.userId;
+      allow update, delete: if signedIn() && request.auth.uid == resource.data.userId;
+    }
+
+    // WebRTC signaling: sender creates; either peer may read/prune.
+    match /signaling/{id} {
+      allow read: if signedIn()
+        && (request.auth.uid == resource.data.from || request.auth.uid == resource.data.to);
+      allow create: if signedIn() && request.auth.uid == request.resource.data.from;
+      allow update: if false;
+      allow delete: if signedIn();
+    }
+
+    // Admin approval gate. Any signed-in user can read (to self-check); only
+    // admins may grant/revoke. Approval doc id == the approved user's uid.
+    match /approvals/{userId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // Admins are provisioned by hand in the Firebase console; no client writes.
+    match /admins/{uid} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+  }
+}

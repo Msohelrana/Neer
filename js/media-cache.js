@@ -1,7 +1,5 @@
-// <img>/<video> can't send the Appwrite session cookie cross-origin
-// (401 → broken media), so files are fetched once with credentials and
-// served as same-origin blob URLs, cached per fileId for re-renders.
-// Resolves to { url, type } — type distinguishes photos from videos.
+// Each media doc (a base64 data URL in Firestore) is fetched once and cached
+// per fileId so re-renders don't re-read it. Resolves to { url, type }.
 
 import { imageViewBlobUrl, mediaContentType } from "./photos.js";
 
@@ -10,8 +8,6 @@ const kindCache = new Map();   // fileId -> Promise<contentType>
 
 export function bubbleMediaUrl(fileId) {
   if (!blobCache.has(fileId)) {
-    // Straight to the raw file — server-side previews 403 on Appwrite
-    // Cloud's free plan, and photos upload pre-compressed anyway.
     const p = imageViewBlobUrl(fileId).catch((err) => {
       blobCache.delete(fileId); // allow retry on next render
       throw err;

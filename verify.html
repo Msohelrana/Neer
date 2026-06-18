@@ -67,16 +67,18 @@
     }
 
     const params = new URLSearchParams(location.search);
-    const userId = params.get("userId");
-    const secret = params.get("secret");
+    // Firebase email-action links carry ?mode=verifyEmail&oobCode=...
+    const mode = params.get("mode");
+    const oobCode = params.get("oobCode");
 
-    if (userId && secret) {
-      // Arrived from the emailed link — confirm it.
+    if (mode === "verifyEmail" && oobCode) {
+      // Arrived from the emailed link — apply the verification code.
       show("Verifying your email…");
       try {
-        await confirmVerification(userId, secret);
+        await confirmVerification(oobCode);
+        const me = await getCurrentUser();
         // The change is now committed — drop the cancel-change escape hatch.
-        try { localStorage.removeItem(`neer:prevEmail:${userId}`); } catch {}
+        if (me) { try { localStorage.removeItem(`neer:prevEmail:${me.$id}`); } catch {} }
         show("Email verified! Taking you to your chats…");
         setTimeout(() => location.replace("./chat.html"), 1200);
       } catch (err) {

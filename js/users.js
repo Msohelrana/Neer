@@ -1,101 +1,107 @@
-import { client, databases, Query, Permission, Role } from "./appwrite.js";
-import { DB_ID, COL_USERS } from "./config.js";
+import { db, mapDoc } from "./firebase.js";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  onSnapshot,
+  query,
+  orderBy,
+  limit,
+  serverTimestamp,
+} from "firebase/firestore";
+import { COL_USERS } from "./config.js";
 import { wasProfileEnsured, markProfileEnsured } from "./cache.js";
-import { onCollection } from "./realtime.js";
+
+const usersCol = () => collection(db, COL_USERS);
 
 /**
  * Create the user's profile document on first login.
- * Document ID == account $id so we can fetch by ID later.
+ * Document ID == account uid so we can fetch by ID later.
  *
- * After a successful confirmation/creation we set a localStorage flag so
- * subsequent page loads skip the `getDocument` call entirely.
+ * After a successful creation we set a localStorage flag so subsequent page
+ * loads skip the read entirely.
  */
 export async function ensureProfile(user) {
   if (wasProfileEnsured(user.$id)) return;
   if (navigator.onLine === false) return;  // try again when we're back online
   try {
-    await databases.getDocument(DB_ID, COL_USERS, user.$id);
+    const ref = doc(db, COL_USERS, user.$id);
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      markProfileEnsured(user.$id);
+      return;
+    }
+    await setDoc(ref, {
+      name: user.name,
+      email: user.email,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
     markProfileEnsured(user.$id);
-    return;
   } catch (err) {
-    if (err?.code !== 404) {
-      // Network failure → don't block app load; we'll retry on next page open.
-      if (!err?.code) return;
-      throw err;
-    }
+    // Network/permission hiccup → don't block app load; retry next page open.
+    console.warn("ensureProfile failed:", err?.message || err);
   }
-  try {
-    await databases.createDocument(
-      DB_ID,
-      COL_USERS,
-      user.$id,
-      {
-        name: user.name,
-        email: user.email,
-      },
-      [
-        Permission.read(Role.users()),
-        Permission.update(Role.user(user.$id)),
-        Permission.delete(Role.user(user.$id)),
-      ]
-    );
-  } catch (err) {
-    // Race: another tab created it between our get and create.
-    if (err?.code !== 409) {
-      if (!err?.code) return;
-      throw err;
-    }
-  }
-  markProfileEnsured(user.$id);
 }
 
 export async function listOtherUsers(meId) {
-  const res = await databases.listDocuments(DB_ID, COL_USERS, [
-    Query.notEqual("$id", meId),
-    Query.orderAsc("name"),
-    Query.limit(100),
-  ]);
-  return res.documents;
+  // Firestore can't cheaply express "document id != meId", so fetch the page
+  // ordered by name and drop myself client-side.
+  const snap = await getDocs(query(usersCol(), orderBy("name"), limit(100)));
+  return snap.docs.map(mapDoc).filter((u) => u.$id !== meId);
 }
 
 export async function getUser(userId) {
-  return databases.getDocument(DB_ID, COL_USERS, userId);
+  const snap = await getDoc(doc(db, COL_USERS, userId));
+  if (!snap.exists()) {
+    const err = new Error("user not found");
+    err.code = 404;
+    throw err;
+  }
+  return mapDoc(snap);
 }
 
 export async function updateProfileName(userId, name) {
-  return databases.updateDocument(DB_ID, COL_USERS, userId, { name });
+  return updateDoc(doc(db, COL_USERS, userId), { name, updatedAt: serverTimestamp() });
 }
 
 export async function updateProfileEmail(userId, email) {
-  return databases.updateDocument(DB_ID, COL_USERS, userId, { email });
+  return updateDoc(doc(db, COL_USERS, userId), { email, updatedAt: serverTimestamp() });
 }
 
 /**
  * Bump my own `lastActiveAt` so other clients can render an "online" dot.
- * Designed to be cheap: callers throttle to ~once a minute.
+ * Designed to be cheap: callers throttle to ~once a minute. Stored as an ISO
+ * string (the value is read/compared directly, not used for ordering).
  */
 export async function heartbeat(userId) {
   try {
-    await databases.updateDocument(DB_ID, COL_USERS, userId, {
+    await updateDoc(doc(db, COL_USERS, userId), {
       lastActiveAt: new Date().toISOString(),
     });
   } catch (err) {
-    // Silently ignore — likely the `lastActiveAt` attribute isn't in the
-    // schema yet. Online dot stays off; rest of the app keeps working.
     console.warn("heartbeat failed:", err?.message || err);
   }
 }
 
 /**
  * Subscribe to the users collection so the sidebar can stay live without
- * polling. Realtime traffic doesn't count toward the read quota.
+ * polling. The initial snapshot (existing users) is skipped — callers seed the
+ * list via listOtherUsers() first, then this fires only on later changes.
  */
 export function subscribeUsers(handlers) {
   const { onCreate, onUpdate, onDelete } = handlers;
-  return onCollection(COL_USERS, (resp) => {
-    const events = resp.events;
-    if (events.some((e) => e.endsWith(".create"))) onCreate?.(resp.payload);
-    else if (events.some((e) => e.endsWith(".update"))) onUpdate?.(resp.payload);
-    else if (events.some((e) => e.endsWith(".delete"))) onDelete?.(resp.payload);
+  let first = true;
+  return onSnapshot(usersCol(), (snap) => {
+    if (first) { first = false; return; }
+    snap.docChanges().forEach((change) => {
+      const docData = mapDoc(change.doc);
+      if (change.type === "added") onCreate?.(docData);
+      else if (change.type === "modified") onUpdate?.(docData);
+      else if (change.type === "removed") onDelete?.(docData);
+    });
   });
 }

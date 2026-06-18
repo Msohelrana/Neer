@@ -8,7 +8,7 @@ const ICE_CONFIG = {
 };
 
 /**
- * Single-channel 1-on-1 audio/video call using WebRTC + Appwrite signaling.
+ * Single-channel 1-on-1 audio/video call using WebRTC + Firestore signaling.
  * Use `startOutgoing()` from the caller side, `acceptIncoming(offer)` from
  * the callee. Pass `{ media: "video" }` in opts for a video call.
  * Events: 'ringing' | 'accepted' | 'connected' | 'ended'

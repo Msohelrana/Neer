@@ -1,45 +1,50 @@
-import { databases, teams, Query, ID } from "./appwrite.js";
-import { DB_ID, COL_APPROVALS, ADMIN_TEAM_NAME } from "./config.js";
+import { db, auth, mapDoc } from "./firebase.js";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  deleteDoc,
+  query,
+  limit,
+  serverTimestamp,
+} from "firebase/firestore";
+import { COL_APPROVALS, COL_ADMINS } from "./config.js";
 
 /**
- * Admin approval gate. A user may enter the app only when an approval doc
- * with their userId exists. The approvals collection is writable only by the
- * "admins" team (enforced server-side by collection permissions), so users
- * cannot approve themselves.
+ * Admin approval gate. A user may enter the app only when an approval doc with
+ * their userId exists. The `approvals` collection is writable only by users who
+ * have an `admins/{uid}` doc (enforced by Security Rules), so users cannot
+ * approve themselves. Approval doc id == userId for direct lookups.
  */
 
 const cacheKey = (userId) => `neer:approved:${userId}`;
 
-// Approval is bound to the email the admin approved: changing the account
-// email breaks the match, which forces a fresh admin approval (users have no
-// write access to approval docs, so they can't re-bind it themselves).
+// Approval is bound to the email the admin approved: changing the account email
+// breaks the match, forcing a fresh admin approval.
 export async function isApproved(userId, email) {
   try {
-    const res = await databases.listDocuments(DB_ID, COL_APPROVALS, [
-      Query.equal("userId", userId),
-      Query.limit(1),
-    ]);
-    const doc = res.documents[0];
-    const ok = !!doc && doc.email === email;
+    const snap = await getDoc(doc(db, COL_APPROVALS, userId));
+    const ok = snap.exists() && snap.data().email === email;
     try {
       if (ok) localStorage.setItem(cacheKey(userId), email);
       else localStorage.removeItem(cacheKey(userId));
     } catch {}
     return ok;
   } catch (err) {
-    // Collection not created yet → gate is disabled so the app keeps working
-    // until the console setup (see config.js) is done.
-    if (err?.code === 404) return true;
-    // Network blip → trust the last known answer instead of locking out.
+    // Network/permission blip → trust the last known answer instead of locking out.
     return localStorage.getItem(cacheKey(userId)) === email;
   }
 }
 
-// True when the signed-in user belongs to the admins team.
+// True when the signed-in user has an admins/{uid} doc.
 export async function isAdmin() {
   try {
-    const res = await teams.list();
-    return res.teams.some((t) => t.name === ADMIN_TEAM_NAME);
+    const uid = auth.currentUser?.uid;
+    if (!uid) return false;
+    const snap = await getDoc(doc(db, COL_ADMINS, uid));
+    return snap.exists();
   } catch {
     return false;
   }
@@ -48,14 +53,18 @@ export async function isAdmin() {
 // ----- Admin-only (fail server-side for everyone else) -----
 
 export async function listApprovals() {
-  const res = await databases.listDocuments(DB_ID, COL_APPROVALS, [Query.limit(500)]);
-  return res.documents;
+  const res = await getDocs(query(collection(db, COL_APPROVALS), limit(500)));
+  return res.docs.map(mapDoc);
 }
 
 export async function approveUser(userId, email) {
-  return databases.createDocument(DB_ID, COL_APPROVALS, ID.unique(), { userId, email });
+  return setDoc(doc(db, COL_APPROVALS, userId), {
+    userId, email,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function revokeApproval(approvalDocId) {
-  return databases.deleteDocument(DB_ID, COL_APPROVALS, approvalDocId);
+  return deleteDoc(doc(db, COL_APPROVALS, approvalDocId));
 }
